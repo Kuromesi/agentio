@@ -44,7 +44,7 @@ func TestBuildSlotsAreJSONNative(t *testing.T) {
 			headers: map[string]string{"x": "1"},
 			Query:   map[string][]string{"q": {"v"}},
 		},
-		Pod{Name: "p", Namespace: "ns", IP: "1.2.3.4", Labels: map[string]string{"l": "1"}},
+		Workload{Name: "p", Namespace: "ns", IP: "1.2.3.4", Labels: map[string]string{"l": "1"}},
 		Profile{Name: "sp", Namespace: "spns"},
 		Rule{Name: "r"},
 		map[string]any{"tier": "gold"},
@@ -90,7 +90,7 @@ func TestBuildBagCarriesNoSecretKey(t *testing.T) {
 			headers: map[string]string{"x-tenant": "a"},
 			Query:   map[string][]string{"q": {"v"}},
 		},
-		Pod{Name: "p", Namespace: "ns", IP: "1.2.3.4", Labels: map[string]string{"app": "sleep"}},
+		Workload{Name: "p", Namespace: "ns", IP: "1.2.3.4", Labels: map[string]string{"app": "sleep"}},
 		Profile{Name: "sp", Namespace: "spns"},
 		Rule{Name: "r"},
 		map[string]any{"tier": "gold"},
@@ -137,7 +137,7 @@ func TestBuildSharesSourceMaps(t *testing.T) {
 	in := map[string]any{"tier": "gold"}
 	s := NewScope(
 		Request{Host: "h", headers: headers},
-		Pod{Labels: labels}, Profile{}, Rule{}, in,
+		Workload{Labels: labels}, Profile{}, Rule{}, in,
 	)
 	bag := s.buildBag()
 
@@ -187,7 +187,7 @@ func TestBuildBagKeySetIsExact(t *testing.T) {
 
 	bag := NewScope(
 		Request{Host: "h", Port: 443, headers: map[string]string{"x": "1"}},
-		Pod{Name: "p", Labels: map[string]string{"l": "1"}},
+		Workload{Name: "p", Labels: map[string]string{"l": "1"}},
 		Profile{Name: "sp"}, Rule{Name: "r"},
 		map[string]any{"tier": "gold"},
 	).buildBag()
@@ -208,7 +208,7 @@ func TestBuildBagKeySetIsExact(t *testing.T) {
 // TestBuildNonNilMaps pins that headers, queryParams and labels are never nil,
 // so the bag's shape does not depend on what the request carried.
 func TestBuildNonNilMaps(t *testing.T) {
-	bag := NewScope(Request{}, Pod{}, Profile{}, Rule{}, nil).buildBag()
+	bag := NewScope(Request{}, Workload{}, Profile{}, Rule{}, nil).buildBag()
 	req := bag["request"].(map[string]any)
 	if req["headers"].(map[string]string) == nil {
 		t.Error("request.headers must not be nil")
@@ -227,7 +227,7 @@ func TestBuildNonNilMaps(t *testing.T) {
 // TestActivationMemoises pins that the bag is built once per Scope, including
 // when the first call arrives through audit's by-value copy of the Scope.
 func TestActivationMemoises(t *testing.T) {
-	s := NewScope(Request{Host: "h"}, Pod{}, Profile{}, Rule{}, nil)
+	s := NewScope(Request{Host: "h"}, Workload{}, Profile{}, Rule{}, nil)
 	first := s.Activation()
 	if second := s.Activation(); second != first {
 		t.Error("Activation must memoise")
@@ -240,7 +240,7 @@ func TestActivationMemoises(t *testing.T) {
 	}
 
 	// And the copy can legitimately be the first caller.
-	fresh := NewScope(Request{Host: "h2"}, Pod{}, Profile{}, Rule{}, nil)
+	fresh := NewScope(Request{Host: "h2"}, Workload{}, Profile{}, Rule{}, nil)
 	c := *fresh
 	viaCopy := c.Activation()
 	if viaCopy != fresh.Activation() {
@@ -254,7 +254,7 @@ func TestActivationMemoises(t *testing.T) {
 func TestActivationConcurrent(t *testing.T) {
 	s := NewScope(
 		Request{Host: "h", headers: map[string]string{"x": "1"}},
-		Pod{Labels: map[string]string{"l": "1"}}, Profile{}, Rule{}, nil,
+		Workload{Labels: map[string]string{"l": "1"}}, Profile{}, Rule{}, nil,
 	)
 	const n = 64
 	got := make([]cel.Activation, n)

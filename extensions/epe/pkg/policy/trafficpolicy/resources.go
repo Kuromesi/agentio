@@ -25,8 +25,8 @@ import (
 	ext "github.com/openkruise/agentio/api/extensions/v1"
 	sec "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/model"
 )
 
@@ -50,11 +50,11 @@ type policySnapshot struct {
 
 // lookup holds one view. Only an unresolved dependency requires another view,
 // after Fetch has immediately published the newly acquired resource.
-func lookup(ctx context.Context, source Resources, pod inputs.Pod) (policySnapshot, error) {
+func lookup(ctx context.Context, source Resources, subject subject.Subject) (policySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return policySnapshot{}, err
 	}
-	result, err := lookupSnapshot(source.Snapshot(), pod)
+	result, err := lookupSnapshot(source.Snapshot(), subject)
 	if err == nil {
 		return result, nil
 	}
@@ -80,7 +80,7 @@ func lookup(ctx context.Context, source Resources, pod inputs.Pod) (policySnapsh
 				if resource == nil {
 					return false, missing
 				}
-				result, err = lookupSnapshot(source.Snapshot(), pod)
+				result, err = lookupSnapshot(source.Snapshot(), subject)
 				if !errors.As(err, &missing) {
 					return err == nil, err
 				}
@@ -96,12 +96,12 @@ func lookup(ctx context.Context, source Resources, pod inputs.Pod) (policySnapsh
 	return result, err
 }
 
-func lookupSnapshot(view *store.Snapshot, pod inputs.Pod) (policySnapshot, error) {
+func lookupSnapshot(view *store.Snapshot, subject subject.Subject) (policySnapshot, error) {
 	if !view.Ready() {
 		return policySnapshot{}, fmt.Errorf("egress resources are not synchronized")
 	}
 	index := view.Query(store.TrafficPolicy).(*queryIndex)
-	entry, err := index.forSubject(store.Subject{Namespace: pod.Namespace, Name: pod.Name})
+	entry, err := index.forSubject(subject)
 	if err != nil {
 		return policySnapshot{}, err
 	}

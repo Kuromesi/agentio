@@ -28,7 +28,7 @@ func TestInvocationMarshalsRequestContract(t *testing.T) {
 		Phase:   PhaseRequest,
 		Source: SourceContext{
 			Namespace: "default",
-			Pod:       "agent-0",
+			Workload:  "agent-0",
 			IP:        "10.0.0.8",
 			Labels:    map[string]string{"app": "agent"},
 		},

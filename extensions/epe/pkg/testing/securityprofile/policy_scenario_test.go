@@ -70,7 +70,7 @@ const trailingBypassRule = `  - name: bypass-everything
 
 func guardedMCPRequest() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("POST", "server.example.com", "/guarded").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("mcp-protocol-version", "2025-11-25").
 		Body([]byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"unlisted-tool"}}`))
 }
@@ -130,12 +130,12 @@ spec:
 `)
 
 	spoofed := enginetest.NewRequest("GET", "server.example.com:8080", "/port").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		DestinationPort(80)
 	h.Run(t, spoofed).RequireBlockedBody(t, 418, "blocked-port")
 
 	realPort := enginetest.NewRequest("GET", "server.example.com", "/port").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		DestinationPort(8080)
 	h.Run(t, realPort).RequirePassthrough(t)
 }
@@ -171,12 +171,12 @@ spec:
 `)
 
 	h.Run(t, enginetest.NewRequest("CONNECT", "target.example.com:443", "").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		DestinationPort(1087).
 		StreamingHeaders()).RequireBlockedBody(t, 451, "blocked-connect-target")
 
 	h.Run(t, enginetest.NewRequest("CONNECT", "target.example.com:8443", "").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		DestinationPort(1087).
 		StreamingHeaders()).RequirePassthrough(t)
 }

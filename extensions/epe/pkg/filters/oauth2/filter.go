@@ -240,7 +240,7 @@ func (f *Filter) call(
 	grantType string,
 	params url.Values,
 ) (*credential.OAuth2Response, error) {
-	token := st.Peer.Token.Parse(ctx)
+	token := st.Caller.Token.Parse(ctx)
 	if f.source == nil || token == nil || token.AccessToken == "" ||
 		token.SandboxClientID == "" {
 		return nil, fmt.Errorf("OAuth identity or credential connection is unavailable")

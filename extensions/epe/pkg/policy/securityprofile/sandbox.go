@@ -16,7 +16,7 @@
 // agents.kruise.io/security-rules annotation. Only the Sandbox Manager may
 // write that annotation (the tenant-facing metadata key is blacklisted for
 // direct use), and the rules are evaluated under the verified workload
-// identity of the Sandbox's own Pod — so the lookup is an exact
+// namespace/name of the Sandbox source — so the lookup is an exact
 // namespace/name match, never a label selector, which a workload could
 // influence.
 package securityprofile
@@ -26,6 +26,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry/kubernetes/kruise"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -74,13 +77,16 @@ func NewSandboxProfile(sandbox metav1.Object) (*Profile, error) {
 	if err != nil {
 		return nil, err
 	}
+	uid, _ := kruise.SandboxUID(sandbox)
 	return &Profile{
 		Meta: Meta{
 			Name:              sandbox.GetName(),
+			SourceIdentity:    model.SourceIdentity{UID: string(sandbox.GetUID())},
+			SandboxUID:        uid,
 			Namespace:         sandbox.GetNamespace(),
 			CreationTimestamp: sandbox.GetCreationTimestamp(),
 			Version:           sandbox.GetResourceVersion(),
-			Match:             MatchPod,
+			Match:             MatchSandbox,
 		},
 		Selector: labels.Nothing(),
 		Rules:    rules,
@@ -94,6 +100,7 @@ func NewSandboxProfile(sandbox metav1.Object) (*Profile, error) {
 // previous version under the same identity, so a bad annotation update does
 // not silently remove rules that were enforcing.
 func InvalidSandboxProfile(sandbox metav1.Object, err error) *Profile {
+	uid, _ := kruise.SandboxUID(sandbox)
 	message := "invalid sandbox security rules"
 	if err != nil {
 		message = err.Error()
@@ -101,10 +108,12 @@ func InvalidSandboxProfile(sandbox metav1.Object, err error) *Profile {
 	return &Profile{
 		Meta: Meta{
 			Name:              sandbox.GetName(),
+			SourceIdentity:    model.SourceIdentity{UID: string(sandbox.GetUID())},
+			SandboxUID:        uid,
 			Namespace:         sandbox.GetNamespace(),
 			CreationTimestamp: sandbox.GetCreationTimestamp(),
 			Version:           sandbox.GetResourceVersion(),
-			Match:             MatchPod,
+			Match:             MatchSandbox,
 		},
 		Selector:     labels.Nothing(),
 		CompileError: message,

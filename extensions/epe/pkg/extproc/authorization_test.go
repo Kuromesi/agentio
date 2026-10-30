@@ -25,6 +25,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	extProcV3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -32,7 +33,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/trafficpolicy"
 	"github.com/openkruise/agentio/pkg/dns"
 )
@@ -88,7 +88,7 @@ func TestRequestAuthorization(t *testing.T) {
 				calls := 0
 				server := NewServer(ServerDeps{
 					Registrations: regs,
-					Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+					Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 						return engine.Resolution{Units: units}, nil
 					},
 					AuthorizeRequest: func(_ context.Context, stream *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
@@ -229,7 +229,7 @@ func TestAuthorizationPreservesBypassResponseScope(t *testing.T) {
 func TestAuthorizationBudgetReturnsLocalFailure(t *testing.T) {
 	server := NewServer(ServerDeps{
 		PluginBudget: time.Millisecond,
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{}, nil
 		},
 		AuthorizeRequest: func(ctx context.Context, _ *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
@@ -278,7 +278,7 @@ func TestAuthorizationChecksAllHeaderTargetsBeforeBody(t *testing.T) {
 					fixedReg("body", body),
 					fixedRegHeaders("after", tc.after),
 				},
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					return engine.Resolution{
 						Units: []engine.Unit{{Cfgs: []any{struct{}{}, struct{}{}, struct{}{}}}},
 					}, nil
@@ -376,7 +376,7 @@ func TestServiceEntryTargetAuthorization(t *testing.T) {
 			regs := []filter.Registration{fixedRegHeaders("mutation", tc.action)}
 			deps := ServerDeps{
 				Registrations: regs,
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{struct{}{}}}}}, nil
 				},
 			}
@@ -430,7 +430,7 @@ func TestStaticAuthorizationWithoutIdentityAndWithBypass(t *testing.T) {
 				resolves := 0
 				server := NewServer(ServerDeps{
 					Registrations: []filter.Registration{fixedRegHeaders("bypass", filter.Bypass())},
-					Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+					Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 						resolves++
 						if mode == "bypass" {
 							return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{struct{}{}}}}}, nil
@@ -507,7 +507,7 @@ func TestXDSAuthorizerHandlesMissingIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := NewServer(ServerDeps{
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					t.Fatal("profile resolution must not run without identity")
 					return engine.Resolution{}, nil
 				},

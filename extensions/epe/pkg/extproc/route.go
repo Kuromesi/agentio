@@ -42,11 +42,8 @@ func applyRouteMutation(
 	if route == nil || response.GetImmediateResponse() != nil {
 		return response
 	}
-	invalid := func() *extProcPb.ProcessingResponse {
-		return immediateFromReply(filter.Reply{Status: 500, Details: "epe_invalid_route_mutation"})
-	}
 	if err := route.Validate(); err != nil {
-		return invalid()
+		return invalidRouteMutationDeny
 	}
 	if route.Upstream == nil && !route.ClearCache {
 		return response
@@ -66,7 +63,7 @@ func applyRouteMutation(
 		}
 		common = r.RequestBody.Response
 	default:
-		return invalid()
+		return invalidRouteMutationDeny
 	}
 	common.ClearRouteCache = common.ClearRouteCache || route.ClearCache
 	if route.Upstream == nil {
@@ -82,15 +79,15 @@ func applyRouteMutation(
 	}
 	namespace := metadataObject(out.DynamicMetadata, routeMetadataNamespace)
 	if namespace == nil {
-		return invalid()
+		return invalidRouteMutationDeny
 	}
 	upstream := metadataObject(namespace, routeUpstreamField)
 	if upstream == nil {
-		return invalid()
+		return invalidRouteMutationDeny
 	}
 	// An already encoded destination must agree with the new mutation.
 	if existing, ok := upstream.Fields[upstreamAddressField]; ok && existing.GetStringValue() != address.String() {
-		return immediateFromReply(filter.Reply{Status: 500, Details: "epe_conflicting_upstream_target"})
+		return conflictingUpstreamTargetDeny
 	}
 	upstream.Fields[upstreamAddressField] = structpb.NewStringValue(address.String())
 	upstream.Fields[upstreamIPField] = structpb.NewStringValue(address.Addr().String())

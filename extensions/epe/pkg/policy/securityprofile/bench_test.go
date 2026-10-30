@@ -18,9 +18,11 @@ import (
 	"strconv"
 	"testing"
 
+	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // benchSink defeats dead-code elimination.
@@ -31,7 +33,9 @@ var benchSink any
 // clock. profilestore has its own benchmark for that half.
 type benchStore struct{ profiles []*Profile }
 
-func (s benchStore) ProfilesFor(inputs.Pod) []*Profile { return s.profiles }
+func (s benchStore) ResolveProfiles(context.Context, subject.Subject) ([]*Profile, error) {
+	return s.profiles, nil
+}
 
 // benchProfiles compiles nProfiles profiles of nRules rules each. Every rule
 // matches, which is the worst case: each one becomes a unit.
@@ -91,7 +95,7 @@ func BenchmarkBinderBind(b *testing.B) {
 			b.Run(name, func(b *testing.B) {
 				binder := newBinder(regs)
 				req := testRequest("api.example.com")
-				pod := inputs.Pod{
+				workload := inputs.Workload{
 					Name:      "agent-pod-abc123",
 					Namespace: "ns",
 					IP:        "10.244.1.37",
@@ -100,7 +104,7 @@ func BenchmarkBinderBind(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					units, err := binder.bind(profiles, req, pod)
+					units, err := binder.bind(profiles, req, workload)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -124,19 +128,21 @@ func BenchmarkResolver(b *testing.B) {
 			resolve := NewResolver(benchStore{profiles: profiles}, regs, nil)
 			ctx := context.Background()
 			req := testRequest("api.example.com")
-			pod := inputs.Pod{
-				Name:      "agent-pod-abc123",
-				Namespace: "ns",
-				IP:        "10.244.1.37",
-				Labels:    map[string]string{"app": "agent", "tier": "web"},
+			subj := subject.Subject{
+				Workload: subject.Workload{
+					Name:      "agent-pod-abc123",
+					Namespace: "ns",
+					IP:        "10.244.1.37",
+					Labels:    map[string]string{"app": "agent", "tier": "web"},
+				},
 			}
-			if _, err := resolve(ctx, pod, req); err != nil {
+			if _, err := resolve(ctx, subj, req); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				res, err := resolve(ctx, pod, req)
+				res, err := resolve(ctx, subj, req)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -129,5 +129,5 @@ func recordDenial(stream *filter.Stream, address netip.AddrPort, decision Decisi
 }
 
 func denied() (*filter.UpstreamTarget, *filter.Reply, error) {
-	return nil, &filter.Reply{Status: 403, Details: "epe_egress_denied"}, nil
+	return nil, &egressDeniedReply, nil
 }

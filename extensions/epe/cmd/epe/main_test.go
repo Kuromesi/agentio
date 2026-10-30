@@ -58,7 +58,7 @@ func TestPrintEnvironmentExitsBeforeStartup(t *testing.T) {
 		}
 		for _, expected := range []string{"IDENTITY_PROVIDER_URL", "TOKEN_CACHE_TTL", "TOKEN_CACHE_MAX_SIZE",
 			"CREDENTIAL_CACHE_INVALIDATION_WINDOW", "CREDENTIAL_CACHE_INVALIDATION_MAX_TTL", "STS_CACHE_MAX_SIZE", "CREDENTIAL_PROVIDER_MTLS_SOURCE", "AUDIT_WEBHOOK_DIAL_TIMEOUT",
-			"HTTP_CALLOUT_MAX_RESPONSE_BYTES"} {
+			"HTTP_CALLOUT_MAX_RESPONSE_BYTES", "AGENTIO_KUBERNETES_API_QPS", "AGENTIO_KUBERNETES_API_BURST"} {
 			if !strings.Contains(string(output), expected) {
 				t.Errorf("%s export missing %s", format, expected)
 			}

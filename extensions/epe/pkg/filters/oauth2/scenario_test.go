@@ -99,7 +99,7 @@ func TestScenarioOAuthCredentialBoundary(t *testing.T) {
 				enginetest.SingleFilter{Definition: oauth2.Definition(client), Payload: string(payload)},
 			)
 			request := enginetest.NewRequest(http.MethodPost, "unrelated.example.test", "/arbitrary").Scheme("https").
-				Peer("default", "sandbox", nil).SandboxToken("request", "trusted-identity", "trusted-resource").
+				Workload("default", "sandbox", nil).SandboxToken("request", "trusted-identity", "trusted-resource").
 				Header("authorization", "Bearer unused").Header("content-type", tc.contentType)
 			if tc.body != "" {
 				request.Body([]byte(tc.body))
@@ -194,7 +194,7 @@ func TestScenarioOAuthResourceCache(t *testing.T) {
 			})
 			for range 3 {
 				request := enginetest.NewRequest(http.MethodGet, "api.example.test", "/document").Scheme("https").
-					Peer("default", "sandbox", nil).SandboxToken("request", "trusted-identity", "trusted-resource").
+					Workload("default", "sandbox", nil).SandboxToken("request", "trusted-identity", "trusted-resource").
 					Header("authorization", "Bearer unused")
 				verdict := h.Run(t, request)
 				if verdict.Err != nil {

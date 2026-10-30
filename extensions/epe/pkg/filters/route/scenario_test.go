@@ -24,7 +24,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/route"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 )
 
@@ -56,7 +56,7 @@ func routeHarness(t *testing.T, configs []route.Config, buffered bool, denyBody 
 	}
 	return enginetest.New(t, enginetest.Options{
 		Registrations: regs,
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: units}, nil
 		},
 	})
@@ -69,7 +69,7 @@ func target(address string) route.Config {
 
 func routeRequest() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "api.example.com:443", "/v1").
-		Peer("default", "sandbox", nil)
+		Workload("default", "sandbox", nil)
 }
 
 func TestScenario_RouteTargetReachesWire(t *testing.T) {

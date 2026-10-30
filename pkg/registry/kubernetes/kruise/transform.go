@@ -23,6 +23,7 @@ import (
 
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	agentlog "github.com/openkruise/agentio/pkg/log"
@@ -38,16 +39,22 @@ func sandboxUID(sandbox *agentsv1alpha1.Sandbox) (string, bool) {
 	if sandbox == nil {
 		return "", false
 	}
-	if sandboxID := sandbox.Labels[agentsv1alpha1.LabelSandboxID]; sandboxID != "" {
+	return SandboxUID(sandbox)
+}
+
+// SandboxUID reads the delivery identity from metadata, shared with EPE's
+// metadata-only source. A pooled Sandbox without a delivery label has no identity.
+func SandboxUID(sandbox metav1.Object) (string, bool) {
+	if sandboxID := sandbox.GetLabels()[agentsv1alpha1.LabelSandboxID]; sandboxID != "" {
 		return model.SandboxUID(model.SandboxKindKruise, sandboxID), true
 	}
-	if sandbox.Labels[agentsv1alpha1.LabelSandboxPool] != "" {
+	if sandbox.GetLabels()[agentsv1alpha1.LabelSandboxPool] != "" {
 		return "", false
 	}
-	if sandbox.Namespace == "" || sandbox.Name == "" {
+	if sandbox.GetNamespace() == "" || sandbox.GetName() == "" {
 		return "", false
 	}
-	return model.SandboxUID(model.SandboxKindKruise, sandbox.Namespace+"--"+sandbox.Name), true
+	return model.SandboxUID(model.SandboxKindKruise, sandbox.GetNamespace()+"--"+sandbox.GetName()), true
 }
 
 func newSandboxesByUID(

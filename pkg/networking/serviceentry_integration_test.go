@@ -54,7 +54,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
@@ -103,7 +103,7 @@ func TestEnvoyServiceEntryAuthorization(t *testing.T) {
 			deps := extproc.ServerDeps{
 				Registrations:               regs,
 				FailClosedOnMissingIdentity: true,
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					resolutionCalls.Add(1)
 					return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{true}}}}, nil
 				},

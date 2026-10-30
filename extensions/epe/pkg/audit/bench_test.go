@@ -77,7 +77,7 @@ func benchAuditScope() *Scope {
 				Method:  "POST",
 				Headers: map[string]string{"x-request-id": "abc", "x-tenant": "a"},
 			}),
-			inputs.Pod{Name: "sandbox-pod", Namespace: "test-ns", IP: "10.0.0.1", Labels: map[string]string{"app": "sleep"}},
+			inputs.Workload{Name: "sandbox-pod", Namespace: "test-ns", IP: "10.0.0.1", Labels: map[string]string{"app": "sleep"}},
 			inputs.Profile{Name: "profile", Namespace: "test-ns"},
 			inputs.Rule{Name: "rule"},
 			nil,

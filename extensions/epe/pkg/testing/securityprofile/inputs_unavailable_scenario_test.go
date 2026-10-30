@@ -20,6 +20,7 @@
 package securityprofile
 
 import (
+	"context"
 	"testing"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -29,8 +30,8 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/enginetest"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 	"github.com/openkruise/agentio/pkg/krt"
@@ -40,8 +41,8 @@ import (
 // can install a profile in the degraded inputs-unavailable state directly.
 type staticMatcher []*policysecurityprofile.Profile
 
-func (m staticMatcher) ProfilesFor(inputs.Pod) []*policysecurityprofile.Profile {
-	return m
+func (m staticMatcher) ResolveProfiles(context.Context, subject.Subject) ([]*policysecurityprofile.Profile, error) {
+	return m, nil
 }
 
 // compileWithInputsError compiles and projects the CRD object, then marks its
@@ -89,13 +90,13 @@ func TestScenario_BlockRuleEnforcedWithUnavailableInputs(t *testing.T) {
 	})
 
 	h.Run(t, enginetest.NewRequest("GET", "evil.example.com", "/exfil").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
 		RequireBlocked(t, 403)
 
 	// A non-matching host still passes through: the degraded profile does not
 	// blanket-deny, it enforces exactly its rules.
 	h.Run(t, enginetest.NewRequest("GET", "ok.example.com", "/fine").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})).
 		RequirePassthrough(t)
 }
 
@@ -140,7 +141,7 @@ func TestScenario_TokenTransformFailStrategyWithUnavailableInputs(t *testing.T) 
 			Registrations: regs,
 		})
 		return h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/v1").
-			Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}))
+			Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}))
 	}
 	const inputsTemplate = "Bearer {{ .Token }}-{{ .Inputs.routing }}"
 

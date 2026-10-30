@@ -28,6 +28,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // One Server serves every stream, so everything it holds — registrations,
@@ -96,13 +97,13 @@ func concurrentServer(t *testing.T) *Server {
 	}
 	regs := []filter.Registration{pause, resp}
 	return NewServer(ServerDeps{
-		Resolve: func(_ context.Context, pod inputs.Pod, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
-			// pod.Name identifies the stream; the unit's config carries it
+		Resolve: func(_ context.Context, subj subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+			// pod.Workload.Name identifies the stream; the unit's config carries it
 			// through to the filter.
 			return engine.Resolution{Units: []engine.Unit{{
-				ID:    filter.UnitID{Scope: "default/p1", Name: pod.Name},
-				Scope: inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil),
-				Cfgs:  []any{struct{}{}, pod.Name},
+				ID:    filter.UnitID{Scope: "default/p1", Name: subj.Workload.Name},
+				Scope: inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil),
+				Cfgs:  []any{struct{}{}, subj.Workload.Name},
 			}}}, nil
 		},
 		Registrations: regs,

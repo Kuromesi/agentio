@@ -51,7 +51,7 @@ func testRequest(headers map[string]string) (*filter.Stream, *inputs.Scope) {
 	}
 	return &filter.Stream{Request: req}, inputs.NewScope(
 		inputs.RequestFrom(req),
-		inputs.Pod{Name: "agent-1", Namespace: "team-a", IP: "10.0.0.1"},
+		inputs.Workload{Name: "agent-1", Namespace: "team-a", IP: "10.0.0.1"},
 		inputs.Profile{Name: "backend", Namespace: "team-a"},
 		inputs.Rule{Name: "inject"},
 		map[string]any{"aud": "inventory"},
@@ -60,7 +60,7 @@ func testRequest(headers map[string]string) (*filter.Stream, *inputs.Scope) {
 
 func testScopeWithPort(port int32) *inputs.Scope {
 	req := httpreq.HTTPRequest{Port: port}
-	return inputs.NewScope(inputs.RequestFrom(req), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
+	return inputs.NewScope(inputs.RequestFrom(req), inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil)
 }
 
 func prepareAPIKey(t *testing.T, st *filter.Stream, scope *inputs.Scope, cfg ApiKeyConfig) (PreparedApiKeyConfig, bool, error) {
@@ -257,7 +257,7 @@ func TestAPIKeyPrepareTargets(t *testing.T) {
 			headerSpec{Names: []string{"authorization"}, Value: valueSourceSpec{Value: ptr.To("static")}},
 			headerSpec{CEL: ptr.To(`inputs.targets`), Value: valueSourceSpec{Value: ptr.To("dynamic")}},
 		)
-		scope := inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, map[string]any{
+		scope := inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, map[string]any{
 			"targets": targets,
 		})
 		prepared, empty, err := (apiKeySigner{}).Prepare(&filter.Stream{}, scope, cfg)
@@ -289,7 +289,7 @@ func TestAPIKeyPrepareTargets(t *testing.T) {
 	t.Run("scope snapshot wins over stream and nil scope falls back", func(t *testing.T) {
 		st := &filter.Stream{Request: httpreq.HTTPRequest{Headers: map[string]string{"x-api-key": "stream"}}}
 		snapshot := httpreq.HTTPRequest{Headers: map[string]string{"x-api-key": "snapshot"}}
-		scope := inputs.NewScope(inputs.RequestFrom(snapshot), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
+		scope := inputs.NewScope(inputs.RequestFrom(snapshot), inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil)
 		cfg := mustAPIKeyConfig(t, headerSpec{Names: []string{"x-api-key"}, Value: valueSourceSpec{Value: ptr.To("x")}})
 		prepared, _, err := prepareAPIKey(t, st, scope, cfg)
 		if err != nil || prepared.Headers[0].OriginalValue != "snapshot" {
@@ -440,7 +440,7 @@ func TestAPIKeySign(t *testing.T) {
 	t.Run("template inputs stay lazy when unavailable", func(t *testing.T) {
 		req := httpreq.HTTPRequest{Method: "GET", Headers: map[string]string{"x-context": "caller"}}
 		st := &filter.Stream{Request: req}
-		scope := inputs.NewScope(inputs.RequestFrom(req), inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil,
+		scope := inputs.NewScope(inputs.RequestFrom(req), inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil,
 			inputs.WithInputsError("configmap missing"))
 		withoutInputs := mustAPIKeyConfig(t, headerSpec{
 			Names: []string{"x-context"},

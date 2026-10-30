@@ -59,7 +59,7 @@ const DefaultBufferSize = 4096
 // Units counts matched policy units (rules), not profiles.
 type Entry struct {
 	RequestID     string
-	Pod           types.NamespacedName
+	Workload      types.NamespacedName
 	Method        string
 	Host          string
 	Path          string
@@ -137,7 +137,7 @@ func (l *BufferedLogger) Start(ctx context.Context) error {
 func (l *BufferedLogger) emit(e Entry) {
 	kvs := []any{
 		"requestID", e.RequestID,
-		"pod", e.Pod.String(),
+		"pod", e.Workload.String(),
 		"method", e.Method,
 		"host", e.Host,
 		"path", e.Path,

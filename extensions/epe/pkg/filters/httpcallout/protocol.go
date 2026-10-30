@@ -58,7 +58,7 @@ type Invocation struct {
 // request. It intentionally has no credential or sandbox-token field.
 type SourceContext struct {
 	Namespace string            `json:"namespace,omitempty"`
-	Pod       string            `json:"pod,omitempty"`
+	Workload  string            `json:"pod,omitempty"`
 	IP        string            `json:"ip,omitempty"`
 	Labels    map[string]string `json:"labels,omitempty"`
 }

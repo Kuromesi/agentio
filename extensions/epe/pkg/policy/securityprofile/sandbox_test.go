@@ -27,6 +27,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/eval"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/headermutation"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 const validInlineAnnotation = `[{"name":"trace","match":[{"domains":["api.example.com"]}],` +
@@ -44,7 +45,7 @@ func sandboxWithRules(name, ns, raw string) *v1alpha1.Sandbox {
 }
 
 // The inline entry must compile into an identity-keyed profile with no label
-// selector: these rules are looked up by verified pod identity only.
+// selector: these rules are looked up by Sandbox identity only.
 func TestNewSandboxProfile(t *testing.T) {
 	p, err := NewSandboxProfile(sandboxWithRules("sbx-1", "sandboxes", validInlineAnnotation))
 	if err != nil {
@@ -88,8 +89,16 @@ func TestNewInlineProfileRejections(t *testing.T) {
 	}{
 		{"invalid json", `{`, "decode"},
 		{"empty array", `[]`, "contains no rules"},
-		{"unknown field", `[{"name":"r","priority":3,"match":[{"domains":["a.example.com"]}],"actions":{"block":{}}}]`, "decode"},
-		{"bad regex", `[{"name":"r","match":[{"domains":["a.example.com"],"paths":[{"type":"Regex","value":"["}]}],"actions":{"block":{}}}]`, "regex"},
+		{
+			"unknown field",
+			`[{"name":"r","priority":3,"match":[{"domains":["a.example.com"]}],"actions":{"block":{}}}]`,
+			"decode",
+		},
+		{
+			"bad regex",
+			`[{"name":"r","match":[{"domains":["a.example.com"],"paths":[{"type":"Regex","value":"["}]}],"actions":{"block":{}}}]`,
+			"regex",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -165,12 +174,12 @@ type inlineStore struct {
 	inline   []*Profile
 }
 
-func (s inlineStore) ProfilesFor(pod inputs.Pod) []*Profile {
+func (s inlineStore) ResolveProfiles(_ context.Context, subj subject.Subject) ([]*Profile, error) {
 	matched := append([]*Profile(nil), s.selector...)
-	if pod.Name != "" {
+	if subj.Workload.Name != "" {
 		matched = append(matched, s.inline...)
 	}
-	return matched
+	return matched, nil
 }
 
 // The projected payload must parse in the real headermutation filter: this
@@ -194,7 +203,11 @@ func TestInlineHeaderManipulationBindsThroughRealFilter(t *testing.T) {
 		t.Fatalf("Project: %v", err)
 	}
 	b := newBinder(regs)
-	units, err := b.bind([]*Profile{inline}, testRequest("example.com"), inputs.Pod{Name: "sbx-1", Namespace: "ns"})
+	units, err := b.bind(
+		[]*Profile{inline},
+		testRequest("example.com"),
+		inputs.Workload{Name: "sbx-1", Namespace: "ns"},
+	)
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -229,7 +242,7 @@ func TestInlineHeaderValuesStayLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile escaped value: %v", err)
 	}
-	scope := inputs.NewScope(inputs.Request{}, inputs.Pod{Name: "sbx-1"}, inputs.Profile{}, inputs.Rule{}, nil)
+	scope := inputs.NewScope(inputs.Request{}, inputs.Workload{Name: "sbx-1"}, inputs.Profile{}, inputs.Rule{}, nil)
 	got, err := eval.RenderToString(tmpl, scope)
 	if err != nil {
 		t.Fatalf("render escaped value: %v", err)
@@ -258,7 +271,11 @@ func TestResolverInlineProfilesEvaluateAfterSelectorProfiles(t *testing.T) {
 
 	store := inlineStore{selector: []*Profile{selectorProfile}, inline: []*Profile{inlineProfile}}
 	resolve := NewResolver(store, regs, nil)
-	res, err := resolve(context.Background(), inputs.Pod{Name: "sbx-1", Namespace: "ns"}, testRequest("example.com"))
+	res, err := resolve(
+		context.Background(),
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+		testRequest("example.com"),
+	)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -279,7 +296,11 @@ func TestResolverWithoutInlineProfilesIsUnchanged(t *testing.T) {
 	regs := claimAll(t, nil)
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
-	res, err := resolve(context.Background(), inputs.Pod{Name: "sbx-1", Namespace: "ns"}, testRequest("example.com"))
+	res, err := resolve(
+		context.Background(),
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+		testRequest("example.com"),
+	)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

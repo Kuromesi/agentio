@@ -31,7 +31,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	securityapi "istio.io/api/security/v1alpha1"
-	"k8s.io/client-go/rest"
 
 	"github.com/openkruise/agentio/pkg/compiler"
 	resolverdns "github.com/openkruise/agentio/pkg/dns/controller"
@@ -74,16 +73,6 @@ func grpcServerKeepaliveParameters() keepalive.ServerParameters {
 	}
 }
 
-func kubernetesRESTConfig(kubeconfigPath string) (*rest.Config, error) {
-	config, err := kube.LoadConfig(kubeconfigPath)
-	if err != nil {
-		return nil, err
-	}
-	config.QPS = float32(features.KubernetesAPIQPS)
-	config.Burst = features.KubernetesAPIBurst
-	return config, nil
-}
-
 func run(ctx context.Context, options Options, opts ...Option) error {
 	started := time.Now()
 	composition := applyOptions(opts)
@@ -105,7 +94,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return nil
 	}
 	logStartup(options)
-	config, err := kubernetesRESTConfig(options.Kubeconfig)
+	config, err := kube.LoadConfig(options.Kubeconfig)
 	if err != nil {
 		return err
 	}

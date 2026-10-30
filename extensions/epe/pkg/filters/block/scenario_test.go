@@ -28,7 +28,7 @@ import (
 
 func blockRequest() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "evil.example.com", "/exfil").
-		Peer("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})
+		Workload("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})
 }
 
 func TestScenario_BlockReturnsConfiguredImmediateResponse(t *testing.T) {

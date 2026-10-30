@@ -18,42 +18,18 @@ import (
 	"encoding/base64"
 	"encoding/json"
 
-	"k8s.io/apimachinery/pkg/types"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
-// Peer is the downstream caller: the Sandbox pod and its agent credential,
-// resolved from filter_state and source.address. Mirrors the source/Peer
-// half of Envoy's AttributeContext. Never expression-visible; the
-// expression vocabulary lives in the inputs package.
-//
-// Peer and SandboxToken live in the contract package itself because Stream
-// embeds Peer, so anything imported here lands in every filter's dependency
-// closure (see the arch guards).
-type Peer struct {
-	// Pod identifies the source pod from filter_state['agentio.workload.name'] and
-	// filter_state['agentio.workload.namespace'], falling back per field to
-	// filter_state['downstream_peer']. Either half may be empty; see Valid.
-	Pod types.NamespacedName
-	// IP is the source pod IP, extracted from Envoy's source.address
-	// attribute. Empty string when the attribute is absent (E2E test
-	// fallback).
-	IP string
-	// Labels is the source workload's label map, parsed from
-	// filter_state['agentio.workload.labels'] (or legacy sandbox.labels). Nil when pod identity is missing.
-	Labels map[string]string
-	// Token carries filter_state['sandbox.token']. Consumers must call Parse
-	// before reading its fields. Copies of Peer share the same lazy result.
+// CallerContext carries the request's Workload/Sandbox identities and its credential.
+// Credentials are separate from Subject and never expression-visible.
+type CallerContext struct {
+	Subject subject.Subject
+	// Token is parsed lazily; copies of CallerContext share the same result.
 	Token *SandboxToken
-}
-
-// Valid reports whether filter_state carried a usable pod identity.
-// The predicate mirrors the fail-open condition in the request handler: both
-// the pod namespace AND the pod name must be non-empty.
-func (p Peer) Valid() bool {
-	return p.Pod.Namespace != "" && p.Pod.Name != ""
 }
 
 // SandboxToken holds the sandbox credential, decoded on first use. It must

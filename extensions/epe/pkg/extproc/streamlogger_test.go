@@ -21,7 +21,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // recordingStreamLogger stands in for the policy layer's per-stream logger.
@@ -39,7 +39,7 @@ func (l *recordingStreamLogger) Log(_ context.Context, _ *filter.Stream, info *f
 // first call and an empty resolution on every later call.
 func resolveOnce(logger filter.StreamLogger, regs int) engine.Resolver {
 	calls := 0
-	return func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+	return func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 		calls++
 		if calls > 1 {
 			return engine.Resolution{}, nil
@@ -63,7 +63,7 @@ func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
 	logger := &recordingStreamLogger{}
 	boom := errors.New("projection failed")
 	srv := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{StreamLogger: logger}, boom
 		},
 		Registrations: regs,
@@ -71,11 +71,14 @@ func TestResolveErrorStillInstallsStreamLogger(t *testing.T) {
 
 	ctx := context.Background()
 	state := newStreamState()
-	_, err := srv.HandleRequestHeaders(ctx,
+	responses, err := srv.HandleRequestHeaders(ctx,
 		makeRequestHeaders("api.example.com", "/", "GET"),
 		makeAttrsWithLabels("default", "pod", testLabelsB64), state)
 	if !errors.Is(err, boom) {
 		t.Fatalf("HandleRequestHeaders err = %v, want the resolver error", err)
+	}
+	if len(responses) != 1 || responses[0].GetImmediateResponse().GetStatus().GetCode() != 503 {
+		t.Fatalf("resolve failure must send a local 503 before closing the stream: %v", responses)
 	}
 	if state.streamLogger != filter.StreamLogger(logger) {
 		t.Fatal("resolve failure dropped the stream logger; the failed stream would never be audited")
@@ -155,9 +158,11 @@ func TestFinishAfterSendCommitCannotBeOverwrittenByLaterTeardown(t *testing.T) {
 // A stream that never resolved carries no logger, and finishStream must not
 // trip over the nil.
 func TestFinishStreamWithoutResolutionDoesNotPanic(t *testing.T) {
-	srv := NewServer(ServerDeps{Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
-		return engine.Resolution{}, nil
-	}})
+	srv := NewServer(
+		ServerDeps{Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{}, nil
+		}},
+	)
 
 	state := newStreamState()
 	state.markRequestSeen()
