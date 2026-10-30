@@ -49,7 +49,7 @@ type Config struct {
 	PluginBudget time.Duration
 	// AuthorizeRequest runs independently after request rules complete.
 	AuthorizeRequest engine.RequestAuthorizer
-	// FailClosedOnMissingIdentity denies requests when the source pod
+	// FailClosedOnMissingIdentity denies requests when the source workload or Sandbox
 	// identity never reached the filter (e.g. a misconfigured metadata
 	// exchange). With the default (false), independent authorization still runs.
 	FailClosedOnMissingIdentity bool

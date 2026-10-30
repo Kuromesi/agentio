@@ -27,7 +27,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/testing/testsupport"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
@@ -82,7 +82,7 @@ func TestProfileCollection_ConfigMapInputDependency(t *testing.T) {
 	}
 
 	assertState := func(wantInputs map[string]any, wantUnavailable bool) error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -172,7 +172,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 
 	// Initial state replay delivers the pre-existing profile.
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-a, got %d", n)
 		}
 		return nil
@@ -184,7 +184,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "test"}}})); n != 1 {
 			return fmt.Errorf("expected 1 match in ns-b, got %d", n)
 		}
 		return nil
@@ -196,7 +196,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-c", Labels: map[string]string{"app": "test"}}})); n != 1 {
 			return fmt.Errorf("expected global profile to match ns-c, got %d", n)
 		}
 		return nil
@@ -217,7 +217,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("compiled collection has not observed invalid update")
 		}
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-b", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-b", Labels: map[string]string{"app": "test"}}})
 		if len(matched) != 2 {
 			names := make([]string, 0, len(matched))
 			for _, sp := range matched {
@@ -233,7 +233,7 @@ func TestProfileCollection_EndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-c", Labels: map[string]string{"app": "test"}})); n != 0 {
+		if n := len(store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-c", Labels: map[string]string{"app": "test"}}})); n != 0 {
 			return fmt.Errorf("expected global profile removal, still %d matches", n)
 		}
 		return nil
@@ -268,7 +268,7 @@ func TestProfileCollection_SyncsWithoutSandboxCRD(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("collection did not sync while the Sandbox CRD is absent")
 	}
-	if got := store.ProfilesFor(inputs.Pod{Name: "sbx-1", Namespace: "sandboxes"}); len(got) != 0 {
+	if got := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}}); len(got) != 0 {
 		t.Fatalf("Matches = %+v, want no profiles without the CRD", got)
 	}
 }
@@ -300,7 +300,7 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 	}
 
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1 despite the missing ConfigMap", len(matched))
 		}
@@ -327,7 +327,7 @@ func TestProfileCollection_MissingConfigMapOnFirstCreate(t *testing.T) {
 		t.Fatal(err)
 	}
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})
 		if len(matched) != 1 {
 			return fmt.Errorf("matched profiles = %d, want 1", len(matched))
 		}
@@ -376,7 +376,7 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 	}
 
 	testsupport.Eventually(t, 5*time.Second, func() error {
-		if n := len(store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})); n != 1 {
+		if n := len(store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})); n != 1 {
 			return fmt.Errorf("expected 1 match, got %d", n)
 		}
 		return nil
@@ -401,7 +401,7 @@ func TestProfileCollection_ProjectionErrorRejectsVersion(t *testing.T) {
 		if compiled == nil || compiled.CompileError == "" {
 			return fmt.Errorf("projection error has not rejected the update")
 		}
-		matched := store.ProfilesFor(inputs.Pod{Namespace: "ns-a", Labels: map[string]string{"app": "test"}})
+		matched := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "ns-a", Labels: map[string]string{"app": "test"}}})
 		if len(matched) != 1 {
 			return fmt.Errorf("expected last-known-good version to keep serving, got %d matches", len(matched))
 		}

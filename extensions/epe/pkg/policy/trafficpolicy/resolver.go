@@ -20,13 +20,13 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 type resolver struct{ source Resources }
 
-func (s *resolver) config(ctx context.Context, pod inputs.Pod) (egressauthz.Config, error) {
-	snapshot, err := lookup(ctx, s.source, pod)
+func (s *resolver) config(ctx context.Context, subject subject.Subject) (egressauthz.Config, error) {
+	snapshot, err := lookup(ctx, s.source, subject)
 	if err != nil {
 		return egressauthz.Config{}, err
 	}
@@ -44,19 +44,15 @@ func (s *resolver) Authorize(
 	stream *filter.Stream,
 	candidates []netip.AddrPort,
 ) ([]netip.AddrPort, error) {
-	peer := stream.Peer
-	if !peer.Valid() {
+	caller := stream.Caller
+	if !caller.Subject.Workload.HasIdentity() {
 		stream.Info.RecordAuthorization(filter.AuthorizationDecision{
 			Action: "deny",
 			Reason: filter.AuthorizationReasonMissingIdentity,
 		})
 		return nil, nil
 	}
-	cfg, err := s.config(ctx, inputs.Pod{
-		Namespace: peer.Pod.Namespace,
-		Name:      peer.Pod.Name,
-		Labels:    peer.Labels,
-	})
+	cfg, err := s.config(ctx, caller.Subject)
 	if err != nil {
 		return nil, err
 	}

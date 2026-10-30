@@ -134,7 +134,7 @@ func apiKeySecret(namespace, name, token string) *corev1.Secret {
 
 func injectRequest() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "api.example.com", "/v1").
-		Peer("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})
+		Workload("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})
 }
 
 // The golden path: the Secret is read, the value template renders the token,

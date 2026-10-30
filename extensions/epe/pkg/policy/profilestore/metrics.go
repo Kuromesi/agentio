@@ -30,7 +30,7 @@ import (
 const (
 	scopeNamespaced = "namespaced"
 	scopeGlobal     = "global"
-	scopePod        = "pod"
+	scopeSandbox    = "pod" // Preserve the published metric label.
 )
 
 var (
@@ -58,7 +58,7 @@ var (
 
 	// profileUnenforced counts sources that exist in the API but have no
 	// version installed at all, because the first version published for them
-	// failed to compile. Nothing of that policy is in effect, so the pods it
+	// failed to compile. Nothing of that policy is in effect, so the workloads it
 	// targets are unprotected — the severe half of a compile failure, and the
 	// one profileStale deliberately does not cover. Alert on
 	// `epe_profile_unenforced > 0`.
@@ -169,7 +169,7 @@ func (d degradedSets) publish() {
 }
 
 func publishDegraded(g *prometheus.GaugeVec, set map[profileKey]struct{}) {
-	counts := map[string]int{scopeNamespaced: 0, scopeGlobal: 0, scopePod: 0}
+	counts := map[string]int{scopeNamespaced: 0, scopeGlobal: 0, scopeSandbox: 0}
 	for k := range set {
 		counts[k.scope()]++
 	}

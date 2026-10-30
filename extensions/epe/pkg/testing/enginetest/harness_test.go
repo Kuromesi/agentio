@@ -24,6 +24,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 func TestHarnessRunsInjectedResolver(t *testing.T) {
@@ -37,17 +38,17 @@ func TestHarnessRunsInjectedResolver(t *testing.T) {
 	if errs[0] != nil {
 		t.Fatalf("project block payload: %v", errs[0])
 	}
-	resolve := func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+	resolve := func(_ context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
 		return engine.Resolution{Units: []engine.Unit{{
 			ID:    filter.UnitID{Scope: "test/profile", Name: "block"},
-			Scope: inputs.NewScope(inputs.RequestFrom(*req), pod, inputs.Profile{}, inputs.Rule{}, nil),
+			Scope: inputs.NewScope(inputs.RequestFrom(*req), inputs.WorkloadFromSubject(subject), inputs.Profile{}, inputs.Rule{}, nil),
 			Cfgs:  cfgs,
 		}}}, nil
 	}
 
 	h := New(t, Options{Resolve: resolve, Registrations: regs})
 	h.Run(t, NewRequest("GET", "server.example.com", "/blocked").
-		Peer("test", "pod", map[string]string{"app": "test"})).
+		Workload("test", "pod", map[string]string{"app": "test"})).
 		RequireBlockedBody(t, 451, "blocked-neutral")
 }
 
@@ -56,13 +57,13 @@ func TestHarnessRunsInjectedResolver(t *testing.T) {
 // way; the audit log has to agree, or every outcome assertion on the second
 // request in a test reads an entry from the first.
 func TestHarness_AccessLogIsScopedToOneRun(t *testing.T) {
-	resolve := func(_ context.Context, _ inputs.Pod, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+	resolve := func(_ context.Context, _ subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
 		return engine.Resolution{}, nil
 	}
 	h := New(t, Options{Resolve: resolve})
 	req := func() *RequestBuilder {
 		return NewRequest("GET", "server.example.com", "/x").
-			Peer("test", "pod", map[string]string{"app": "test"})
+			Workload("test", "pod", map[string]string{"app": "test"})
 	}
 
 	if got := h.Run(t, req()); len(got.AccessLog) != 1 {
@@ -70,5 +71,22 @@ func TestHarness_AccessLogIsScopedToOneRun(t *testing.T) {
 	}
 	if got := h.Run(t, req()); len(got.AccessLog) != 1 {
 		t.Fatalf("second run AccessLog = %+v, want only its own entry", got.AccessLog)
+	}
+}
+
+func TestHarnessPreservesDiscoveryIdentities(t *testing.T) {
+	want := subject.Subject{
+		Workload: subject.Workload{UID: "native:host"},
+		Sandbox:  &subject.Sandbox{UID: "kruise:sandbox"},
+	}
+	var got subject.Subject
+	h := New(t, Options{Resolve: func(_ context.Context, subject subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+		got = subject
+		return engine.Resolution{}, nil
+	}})
+	h.Run(t, NewRequest("GET", "server.example.com", "/").Subject(want))
+	if got.Workload.UID != want.Workload.UID ||
+		got.Sandbox == nil || got.Sandbox.UID != want.Sandbox.UID {
+		t.Fatalf("resolver subject = %+v, want %+v", got, want)
 	}
 }

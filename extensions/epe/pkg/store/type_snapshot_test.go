@@ -18,6 +18,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // Uses a slice and its own selection index; no DefaultSnapshot dependency.
@@ -45,8 +47,8 @@ func (s *selectedSnapshot) Get(name string) (*Resource, error) {
 
 func (s *selectedSnapshot) List() ([]Resource, error) { return s.resources, nil }
 
-func (s *selectedSnapshot) ResourcesFor(_ Type, subject Subject) ([]Resource, error) {
-	return s.selected[subject.Labels["team"]], nil
+func (s *selectedSnapshot) ResourcesFor(_ Type, subject subject.Subject) ([]Resource, error) {
+	return s.selected[subject.Workload.Labels["team"]], nil
 }
 
 type snapshotBackend struct {
@@ -94,7 +96,7 @@ func TestCustomTypeSnapshotPassThrough(t *testing.T) {
 	if a.Snapshot().Type(profiles) != original {
 		t.Fatal("custom representation was replaced")
 	}
-	got, err := a.ResourcesFor(profiles, Subject{Labels: map[string]string{"team": "team-a"}})
+	got, err := a.ResourcesFor(profiles, subject.Subject{Workload: subject.Workload{Labels: map[string]string{"team": "team-a"}}})
 	if err != nil || len(got) != 1 || got[0].Key.Name != "p" {
 		t.Fatal(got, err)
 	}
@@ -130,7 +132,7 @@ func TestCustomBuilderPrecedenceAndDependencyReuse(t *testing.T) {
 		return current.Type(profiles).(*selectedSnapshot)
 	})
 	before := a.Snapshot()
-	selected, err := before.ResourcesFor(profiles, Subject{Labels: map[string]string{"team": "team-b"}})
+	selected, err := before.ResourcesFor(profiles, subject.Subject{Workload: subject.Workload{Labels: map[string]string{"team": "team-b"}}})
 	if err != nil || len(selected) != 1 || selected[0].Key.Name != "other" {
 		t.Fatal("shadowed resource entered custom index", selected, err)
 	}
@@ -151,11 +153,11 @@ func TestCustomBuilderPrecedenceAndDependencyReuse(t *testing.T) {
 	if builds != oldBuilds+1 || queries != oldQueries+1 {
 		t.Fatal("dependency update did not rebuild")
 	}
-	selected, err = a.ResourcesFor(profiles, Subject{Labels: map[string]string{"team": "team-b"}})
+	selected, err = a.ResourcesFor(profiles, subject.Subject{Workload: subject.Workload{Labels: map[string]string{"team": "team-b"}}})
 	if err != nil || len(selected) != 0 {
 		t.Fatal(selected, err)
 	}
-	selected, err = before.ResourcesFor(profiles, Subject{Labels: map[string]string{"team": "team-b"}})
+	selected, err = before.ResourcesFor(profiles, subject.Subject{Workload: subject.Workload{Labels: map[string]string{"team": "team-b"}}})
 	if err != nil || len(selected) != 1 {
 		t.Fatal("old index was mutated", selected, err)
 	}

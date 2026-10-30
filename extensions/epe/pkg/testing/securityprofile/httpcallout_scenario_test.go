@@ -112,7 +112,7 @@ metadata:
 			v := h.Run(
 				t,
 				enginetest.NewRequest("POST", "api.example.com", "/").
-					Peer("test-ns", "sandbox", nil).
+					Workload("test-ns", "sandbox", nil).
 					Header("x-id", "123").
 					Header("authorization", "secret").
 					Body([]byte("abc")).
@@ -148,7 +148,7 @@ spec:
         request: {}
         failStrategy: %s
 `, strategy))
-			v := h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/").Peer("test-ns", "sandbox", nil))
+			v := h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/").Workload("test-ns", "sandbox", nil))
 			if strategy == "Block" {
 				v.RequireBlocked(t, http.StatusInternalServerError)
 			} else {

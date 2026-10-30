@@ -645,6 +645,10 @@ func TestSortProfiles(t *testing.T) {
 }
 
 func TestSecurityProfileResourceName(t *testing.T) {
+	sandbox := Profile{Meta: Meta{Name: "p1", Namespace: "ns-a", Match: MatchSandbox}}
+	if got := sandbox.ResourceName(); got != "sandbox/ns-a/p1" {
+		t.Errorf("Sandbox ResourceName = %q, want %q", got, "sandbox/ns-a/p1")
+	}
 	namespaced := Profile{Meta: Meta{Name: "p1", Namespace: "ns-a"}}
 	if got := namespaced.ResourceName(); got != "ns-a/p1" {
 		t.Errorf("namespaced ResourceName = %q, want %q", got, "ns-a/p1")

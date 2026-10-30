@@ -87,7 +87,7 @@ The endpoint controls EPE's shared Zap core, including existing controller-runti
 
 ## Profile inspection endpoint
 
-When debug is enabled, `GET` and `POST /debug/profiles` list compiled `SecurityProfile` and `GlobalSecurityProfile` identities from EPE's in-memory store. Every JSON response has `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`.
+When debug is enabled, `GET` and `POST /debug/profiles` list compiled `SecurityProfile`, `GlobalSecurityProfile`, and Sandbox annotation profiles from EPE's in-memory store. Every JSON response has `Content-Type: application/json; charset=utf-8` and `Cache-Control: no-store`.
 
 ### List mode
 
@@ -105,19 +105,22 @@ $ curl --fail --silent --request POST \
 
 ### Match mode
 
-Supply pod labels and a namespace to see the profiles EPE would match for a Pod. A GET uses comma-separated `key=value` pairs in `pod_labels`; a POST uses an object. Match results are returned in evaluation order. A namespace is required whenever labels are supplied.
+Supply workload labels and a namespace to see the profiles EPE would match for a Workload. A GET uses comma-separated `key=value` pairs in `workload_labels`; a POST uses an object. Supply `workload_name` to also include the same-name Sandbox profile after selector matches. Match results are returned in evaluation order. A namespace is required whenever `workload_labels` or `workload_name` is supplied.
 
 ```console
 $ curl --fail --silent \
-    'http://127.0.0.1:15000/debug/profiles?namespace=agent-demo&pod_labels=app=agent-demo,team=payments'
+    'http://127.0.0.1:15000/debug/profiles?namespace=agent-demo&workload_labels=app=agent-demo,team=payments'
+
+$ curl --fail --silent \
+    'http://127.0.0.1:15000/debug/profiles?namespace=agent-demo&workload_name=agent-0&workload_labels=app=agent-demo'
 
 $ curl --fail --silent --request POST \
     --header 'Content-Type: application/json' \
-    --data '{"namespace":"agent-demo","pod_labels":{"app":"agent-demo","team":"payments"}}' \
+    --data '{"namespace":"agent-demo","workload_labels":{"app":"agent-demo","team":"payments"}}' \
     http://127.0.0.1:15000/debug/profiles
 ```
 
-The endpoint matches profile selectors only. It does not run HTTP rule matching, fetch credentials, evaluate request bodies, or predict a final request decision.
+The endpoint selects profiles from workload metadata, including same-name Sandbox profiles when `workload_name` is supplied. It does not run HTTP rule matching, fetch credentials, evaluate request bodies, or predict a final request decision.
 
 ### Response shape and full mode
 

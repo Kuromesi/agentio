@@ -27,9 +27,9 @@ import (
 	ext "github.com/openkruise/agentio/api/extensions/v1"
 	sec "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
 	xdsstore "github.com/openkruise/agentio/extensions/epe/pkg/store/xds"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/xdsclient"
 )
@@ -64,7 +64,7 @@ func (s *benchSource) Observe(_ ...string) (<-chan struct{}, bool) {
 	return s.snapshot.Changed, true
 }
 
-func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, inputs.Pod) {
+func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, subject.Subject) {
 	pack := func(m proto.Message) *anypb.Any {
 		a, err := anypb.New(m)
 		if err != nil {
@@ -107,7 +107,7 @@ func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, inputs.
 	aggregate := store.NewAggregate(xdsstore.New(source))
 	RegisterQueries(aggregate, "Kubernetes")
 	r := &resolver{source: aggregate}
-	return source, aggregate, r, inputs.Pod{Namespace: "ns", Name: "pod-0", IP: "192.0.2.1"}
+	return source, aggregate, r, subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod-0", IP: "192.0.2.1"}}
 }
 
 func BenchmarkResourceQueries(b *testing.B) {

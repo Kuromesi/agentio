@@ -210,7 +210,7 @@ func TestEvalBool(t *testing.T) {
 	act := layerAuditOnly(t,
 		inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{Host: "h", Port: 80, Path: "/", Scheme: "http", Method: "GET"}),
-			inputs.Pod{Namespace: "ns", Labels: map[string]string{"app": "sleep"}},
+			inputs.Workload{Namespace: "ns", Labels: map[string]string{"app": "sleep"}},
 			inputs.Profile{Name: "p"}, inputs.Rule{Name: "r"}, nil).Activation(),
 		map[string]any{"result": "blocked"})
 	ok, err := EvalBool(prog, act)
@@ -233,7 +233,7 @@ func valueActivation(tag string, in map[string]any) cel.Activation {
 			Headers: map[string]string{"x-tenant": tag},
 			Query:   map[string][]string{"q": {tag}},
 		}),
-		inputs.Pod{Name: "pod-" + tag, Namespace: "ns", IP: "10.0.0.1", Labels: map[string]string{"tenant": tag}},
+		inputs.Workload{Name: "pod-" + tag, Namespace: "ns", IP: "10.0.0.1", Labels: map[string]string{"tenant": tag}},
 		inputs.Profile{Name: tag, Namespace: "ns"},
 		inputs.Rule{Name: "rule-" + tag},
 		in,

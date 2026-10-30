@@ -104,14 +104,13 @@ func correlationView(st *filter.Stream) HTTPRequest {
 	}
 }
 
-// sourceContext copies the peer identity. Peer.Token and anything derived from
+// sourceContext copies the workload metadata. CallerContext.Token and anything derived from
 // it are deliberately absent: the endpoint sits outside the mesh trust boundary.
 func sourceContext(st *filter.Stream) SourceContext {
+	workload := st.Caller.Subject.Workload
 	return SourceContext{
-		Namespace: st.Peer.Pod.Namespace,
-		Pod:       st.Peer.Pod.Name,
-		IP:        st.Peer.IP,
-		Labels:    st.Peer.Labels,
+		Namespace: workload.Namespace, Workload: workload.Name,
+		IP: workload.IP, Labels: workload.Labels,
 	}
 }
 

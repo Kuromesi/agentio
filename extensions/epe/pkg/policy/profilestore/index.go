@@ -43,7 +43,7 @@ type profileIndex struct {
 }
 
 // eligibleRequirements returns positive equality requirements that can safely
-// anchor a profile. A match for one of these requirements proves the Pod has
+// anchor a profile. A match for one of these requirements proves the workload has
 // the indexed key and one of the indexed values. Other operators can match an
 // absent key or an unbounded value and must use the fallback scan.
 func eligibleRequirements(selector labels.Selector) []indexRequirement {
@@ -113,7 +113,7 @@ func buildProfileIndex(sortedProfiles []*securityprofile.Profile) profileIndex {
 }
 
 // selectAnchor picks the requirement that narrows best: the one whose worst
-// bucket holds the fewest profiles, so a Pod carrying that label scans as few
+// bucket holds the fewest profiles, so a workload carrying that label scans as few
 // candidates as possible. Any of a selector's eligible requirements would be
 // correct — they are conjunctive — which is what makes this a free choice.
 func selectAnchor(requirements []indexRequirement, bucketCounts map[labelBucket]int) (indexRequirement, bool) {
@@ -153,9 +153,9 @@ func maxBucketCount(requirement indexRequirement, bucketCounts map[labelBucket]i
 	return maxCount
 }
 
-// appendMatches filters fallback entries and every bucket hit by the Pod's
+// appendMatches filters fallback entries and every bucket hit by the workload's
 // labels with the complete selector before appending them. Each profile has
-// exactly one anchor requirement, so a Pod can encounter it in at most one
+// exactly one anchor requirement, so a workload can encounter it in at most one
 // bucket.
 //
 // ls is both the bucket probe and the selector input on purpose: taking one

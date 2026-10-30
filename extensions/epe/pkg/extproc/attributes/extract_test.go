@@ -23,6 +23,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
@@ -84,7 +85,7 @@ func TestExtract(t *testing.T) {
 		name       string
 		attrFields map[string]any
 		headers    map[string]string
-		wantPeer   filter.Peer
+		wantCaller filter.CallerContext
 		wantReq    httpreq.HTTPRequest
 		wantValid  bool
 	}{
@@ -98,15 +99,10 @@ func TestExtract(t *testing.T) {
 				AttrSourceAddress:                  "10.0.0.1:34567",
 				AttrDestinationPort:                float64(9443),
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
-				IP:     "10.0.0.1",
-				Labels: map[string]string{"app": "sleep", "tier": "web"},
-				Token:  filter.NewSandboxToken(b64(tokenJSON)),
-			},
-			wantReq:   fullReq(9443, fullHeaders),
-			wantValid: true,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken(b64(tokenJSON)), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", IP: "10.0.0.1", Labels: map[string]string{"app": "sleep", "tier": "web"}}}},
+			wantReq:    fullReq(9443, fullHeaders),
+			wantValid:  true,
 		},
 		{
 			name: "no destination.port keeps authority port",
@@ -115,13 +111,10 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateWorkloadLabels:          b64("app=sleep,tier=web"),
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
-				Labels: map[string]string{"app": "sleep", "tier": "web"},
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: true,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{"app": "sleep", "tier": "web"}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  true,
 		},
 		{
 			name: "CONNECT keeps target authority port instead of proxy destination port",
@@ -130,11 +123,8 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				AttrDestinationPort:                float64(1087),
 			},
-			headers: connectHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
-				Labels: map[string]string{},
-			},
+			headers:    connectHeaders,
+			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
 			wantReq: httpreq.HTTPRequest{
 				Host:    "target.example.com",
 				Port:    443,
@@ -151,13 +141,10 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-b",
 				FilterStateWorkloadLabels:          b64("app=sleep"),
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "ns1", Name: "pod-b"},
-				Labels: map[string]string{"app": "sleep"},
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: true,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns1", Name: "pod-b", Labels: map[string]string{"app": "sleep"}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  true,
 		},
 		{
 			name: "unparseable sandbox.token retained without parsing",
@@ -166,14 +153,10 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateSandboxToken:            "!!!not-base64-and-not-json!!!",
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
-				Labels: map[string]string{},
-				Token:  filter.NewSandboxToken("!!!not-base64-and-not-json!!!"),
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: true,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken("!!!not-base64-and-not-json!!!"), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  true,
 		},
 		{
 			name: "raw JSON sandbox.token retained without parsing",
@@ -182,14 +165,10 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateSandboxToken:            tokenJSON,
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default", Name: "pod-a"},
-				Labels: map[string]string{},
-				Token:  filter.NewSandboxToken(tokenJSON),
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: true,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken(tokenJSON), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  true,
 		},
 		{
 			name: "missing pod name preserves target for static authorization",
@@ -198,42 +177,35 @@ func TestExtract(t *testing.T) {
 				FilterStateWorkloadLabels:          b64("app=sleep"),
 				AttrSourceAddress:                  "10.0.0.2:1234",
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Namespace: "default"},
-				IP:     "10.0.0.2",
-				Labels: map[string]string{"app": "sleep"},
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: false,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", IP: "10.0.0.2", Labels: map[string]string{"app": "sleep"}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  false,
 		},
 		{
 			name: "missing pod namespace fails identity",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerName: "pod-a",
 			},
-			headers: fullHeaders,
-			wantPeer: filter.Peer{
-				Pod:    types.NamespacedName{Name: "pod-a"},
-				Labels: map[string]string{},
-			},
-			wantReq:   fullReq(8443, fullHeaders),
-			wantValid: false,
+			headers:    fullHeaders,
+			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Name: "pod-a", Labels: map[string]string{}}}},
+			wantReq:    fullReq(8443, fullHeaders),
+			wantValid:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			attrs := makeAttrs(t, tt.attrFields)
-			gotPeer, gotReq := Extract(context.Background(), makeHTTPHeaders(tt.headers), attrs)
-			if !reflect.DeepEqual(gotPeer, tt.wantPeer) {
-				t.Errorf("Extract() peer = %+v, want %+v", gotPeer, tt.wantPeer)
+			gotCaller, gotReq := Extract(context.Background(), makeHTTPHeaders(tt.headers), attrs)
+			if !reflect.DeepEqual(gotCaller, tt.wantCaller) {
+				t.Errorf("Extract() caller = %+v, want %+v", gotCaller, tt.wantCaller)
 			}
 			if !reflect.DeepEqual(gotReq, tt.wantReq) {
 				t.Errorf("Extract() request = %+v, want %+v", gotReq, tt.wantReq)
 			}
-			if gotPeer.Valid() != tt.wantValid {
-				t.Errorf("Valid() = %t, want %t", gotPeer.Valid(), tt.wantValid)
+			if gotCaller.Subject.HasIdentity() != tt.wantValid {
+				t.Errorf("Valid() = %t, want %t", gotCaller.Subject.HasIdentity(), tt.wantValid)
 			}
 		})
 	}
@@ -343,7 +315,7 @@ func TestExtractFilterStateString(t *testing.T) {
 		{
 			name: "no fuzzy suffix fallback",
 			attrs: func() map[string]*structpb.Struct {
-				inner, _ := structpb.NewStruct(map[string]interface{}{"peer.name": "my-pod"})
+				inner, _ := structpb.NewStruct(map[string]interface{}{"caller.name": "my-pod"})
 				return map[string]*structpb.Struct{ExtProcAttrsKey: inner}
 			}(),
 			key:      "name",
@@ -388,7 +360,7 @@ func TestExtractFilterStateString_ValueTypes(t *testing.T) {
 	}
 }
 
-func TestExtractPodIP(t *testing.T) {
+func TestExtractWorkloadIP(t *testing.T) {
 	tests := []struct {
 		name     string
 		raw      string
@@ -412,9 +384,9 @@ func TestExtractPodIP(t *testing.T) {
 				s, _ := structpb.NewStruct(inner)
 				attrs = map[string]*structpb.Struct{ExtProcAttrsKey: s}
 			}
-			got := extractPodIP(attrs)
+			got := extractWorkloadIP(attrs)
 			if got != tt.expected {
-				t.Errorf("extractPodIP(%q) = %q, want %q", tt.raw, got, tt.expected)
+				t.Errorf("extractWorkloadIP(%q) = %q, want %q", tt.raw, got, tt.expected)
 			}
 		})
 	}
@@ -445,53 +417,53 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 		want   types.NamespacedName
 	}{
 		{
-			name: "workload headers override conflicting peer metadata",
+			name: "workload headers override conflicting caller metadata",
 			fields: map[string]any{
 				FilterStateWorkloadName:            "source-pod",
 				FilterStateWorkloadNamespace:       "source-ns",
-				FilterStateDownstreamPeerName:      "peer-pod",
-				FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateDownstreamPeerName:      "caller-pod",
+				FilterStateDownstreamPeerNamespace: "caller-ns",
 			},
 			want: types.NamespacedName{Name: "source-pod", Namespace: "source-ns"},
 		},
 		{
-			name:   "workload headers work without peer metadata",
+			name:   "workload headers work without caller metadata",
 			fields: map[string]any{FilterStateWorkloadName: "source-pod", FilterStateWorkloadNamespace: "source-ns"},
 			want:   types.NamespacedName{Name: "source-pod", Namespace: "source-ns"},
 		},
 		{
 			name:   "missing headers use legacy metadata",
-			fields: map[string]any{FilterStateDownstreamPeerName: "peer-pod", FilterStateDownstreamPeerNamespace: "peer-ns"},
-			want:   types.NamespacedName{Name: "peer-pod", Namespace: "peer-ns"},
+			fields: map[string]any{FilterStateDownstreamPeerName: "caller-pod", FilterStateDownstreamPeerNamespace: "caller-ns"},
+			want:   types.NamespacedName{Name: "caller-pod", Namespace: "caller-ns"},
 		},
 		{
 			name: "empty headers use legacy metadata",
 			fields: map[string]any{
 				FilterStateWorkloadName:            "",
 				FilterStateWorkloadNamespace:       "",
-				FilterStateDownstreamPeerName:      "peer-pod",
-				FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateDownstreamPeerName:      "caller-pod",
+				FilterStateDownstreamPeerNamespace: "caller-ns",
 			},
-			want: types.NamespacedName{Name: "peer-pod", Namespace: "peer-ns"},
+			want: types.NamespacedName{Name: "caller-pod", Namespace: "caller-ns"},
 		},
 		{
 			name: "namespace falls back independently",
 			fields: map[string]any{
 				FilterStateWorkloadName:            "source-pod",
 				FilterStateWorkloadNamespace:       "",
-				FilterStateDownstreamPeerName:      "peer-pod",
-				FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateDownstreamPeerName:      "caller-pod",
+				FilterStateDownstreamPeerNamespace: "caller-ns",
 			},
-			want: types.NamespacedName{Name: "source-pod", Namespace: "peer-ns"},
+			want: types.NamespacedName{Name: "source-pod", Namespace: "caller-ns"},
 		},
 		{
 			name: "name falls back independently",
 			fields: map[string]any{
 				FilterStateWorkloadNamespace:       "source-ns",
-				FilterStateDownstreamPeerName:      "peer-pod",
-				FilterStateDownstreamPeerNamespace: "peer-ns",
+				FilterStateDownstreamPeerName:      "caller-pod",
+				FilterStateDownstreamPeerNamespace: "caller-ns",
 			},
-			want: types.NamespacedName{Name: "peer-pod", Namespace: "source-ns"},
+			want: types.NamespacedName{Name: "caller-pod", Namespace: "source-ns"},
 		},
 		{
 			name:   "partial identity remains invalid",
@@ -510,18 +482,44 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 				"x-agentio-workload-name":      "application-pod",
 				"x-agentio-workload-namespace": "application-ns",
 			})
-			peer, req := Extract(context.Background(), headers, makeAttrs(t, tt.fields))
-			if peer.Pod != tt.want {
-				t.Fatalf("source pod = %v, want %v", peer.Pod, tt.want)
+			caller, req := Extract(context.Background(), headers, makeAttrs(t, tt.fields))
+			workload := caller.Subject.Workload
+			got := types.NamespacedName{Namespace: workload.Namespace, Name: workload.Name}
+			if got != tt.want {
+				t.Fatalf("source workload = %v, want %v", got, tt.want)
 			}
 			wantValid := tt.want.Name != "" && tt.want.Namespace != ""
-			if peer.Valid() != wantValid {
-				t.Fatalf("Valid = %t, want %t", peer.Valid(), wantValid)
+			if caller.Subject.HasIdentity() != wantValid {
+				t.Fatalf("Valid = %t, want %t", caller.Subject.HasIdentity(), wantValid)
 			}
 			if wantValid && req.Host != "api.example.com" {
 				t.Fatalf("valid workload identity did not reach request extraction: %+v", req)
 			}
 		})
+	}
+}
+
+func TestExtractPolicyIdentitiesFromCapturedContext(t *testing.T) {
+	headers := makeHTTPHeaders(map[string]string{
+		":method": "GET", ":authority": "api.example.com", ":path": "/",
+		"x-agentio-workload-uid": "forged-workload", "x-agentio-sandbox-id": "forged-sandbox",
+	})
+	for _, captured := range []bool{false, true} {
+		fields := map[string]any{FilterStateWorkloadNamespace: "ns", FilterStateWorkloadName: "pod"}
+		if captured {
+			fields[FilterStateWorkloadUID] = "native:workload"
+			fields[FilterStateSandboxID] = "kruise:sandbox"
+		}
+		caller, _ := Extract(context.Background(), headers, makeAttrs(t, fields))
+		subject := caller.Subject
+		if captured {
+			if subject.Workload.UID != "native:workload" ||
+				subject.Sandbox == nil || subject.Sandbox.UID != "kruise:sandbox" {
+				t.Fatalf("captured identities lost: %+v", subject)
+			}
+		} else if subject.Workload.UID != "" || subject.Sandbox != nil {
+			t.Fatalf("application headers supplied policy identity: %+v", subject)
+		}
 	}
 }
 
@@ -601,13 +599,13 @@ func TestWorkloadLabelsRollingUpgrade(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.fields[FilterStateWorkloadName] = "client"
 			tc.fields[FilterStateWorkloadNamespace] = "demo"
-			peer, _ := Extract(
+			caller, _ := Extract(
 				t.Context(),
 				makeHTTPHeaders(map[string]string{":method": "GET", ":authority": "example.com"}),
 				makeAttrs(t, tc.fields),
 			)
-			if !reflect.DeepEqual(peer.Labels, tc.want) {
-				t.Fatalf("labels=%v want=%v", peer.Labels, tc.want)
+			if !reflect.DeepEqual(caller.Subject.Workload.Labels, tc.want) {
+				t.Fatalf("labels=%v want=%v", caller.Subject.Workload.Labels, tc.want)
 			}
 		})
 	}

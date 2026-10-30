@@ -36,6 +36,7 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/pkg/model"
 )
 
 // pathMatcher is a pre-compiled path matcher for a single PathMatch entry.
@@ -331,6 +332,10 @@ func compileRules(rules []v1alpha1.SecurityRule) ([]Rule, error) {
 // variants collapse to the same in-memory representation.
 type Meta struct {
 	Name string
+	// SourceIdentity prevents a recreated Sandbox from inheriting its predecessor's rules.
+	SourceIdentity model.SourceIdentity
+	// SandboxUID identifies the execution unit, independently of the source object.
+	SandboxUID string
 	// Namespace is empty for cluster-scoped GlobalSecurityProfile objects.
 	Namespace         string
 	CreationTimestamp metav1.Time
@@ -338,7 +343,7 @@ type Meta struct {
 	// Version is the source object's resourceVersion, carried for admin
 	// output and for identifying which version of a profile is installed.
 	Version string
-	// Match says how this profile is selected for a Pod. It is the only
+	// Match says how this profile is selected for a workload. It is the only
 	// difference the store draws between policy sources, and it doubles as a
 	// key discriminator: a Sandbox and a SecurityProfile in one namespace may
 	// share a name and even a resourceVersion, so anything keyed on
@@ -346,24 +351,24 @@ type Meta struct {
 	Match MatchMode
 }
 
-// MatchMode says how the store selects a profile for a Pod. Keep it small: it
+// MatchMode says how the store selects a profile for a workload. Keep it small: it
 // sits in the snapshot's map key, which is copied whole on every write.
 type MatchMode uint8
 
 const (
-	// MatchSelector matches Pods by label selector — SecurityProfile and
+	// MatchSelector matches workloads by label selector — SecurityProfile and
 	// GlobalSecurityProfile.
 	MatchSelector MatchMode = iota
-	// MatchPod matches exactly one Pod by its verified identity: the rules a
+	// MatchSandbox matches exactly one Sandbox by its verified identity: the rules a
 	// Sandbox carries in its annotation. Such a profile is never matched by
 	// labels, which a workload can influence.
-	MatchPod
+	MatchSandbox
 )
 
-// String is the wire form used in resource names and log fields.
+// String names the match mode in internal resource keys and diagnostic logs.
 func (m MatchMode) String() string {
-	if m == MatchPod {
-		return "pod"
+	if m == MatchSandbox {
+		return "sandbox"
 	}
 	return "selector"
 }
@@ -410,8 +415,8 @@ type Profile struct {
 // ResourceName implements krt.ResourceNamer so compiled profiles can be held
 // in krt collections. Cluster-scoped GlobalSecurityProfiles (empty namespace)
 // key by bare name and namespaced SecurityProfiles key by namespace/name, so
-// the two scopes can never collide inside a joined collection. Pod-matched
-// pod-matched profiles carry a mode prefix on top: a Sandbox and a
+// the two scopes can never collide inside a joined collection. Sandbox-matched
+// profiles carry a mode prefix on top: a Sandbox and a
 // SecurityProfile in the same namespace can share a name, and without the
 // prefix one would silently replace the other in a joined collection.
 func (sp Profile) ResourceName() string {

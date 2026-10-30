@@ -20,27 +20,30 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/types"
-
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
+
+func TestSourceContextWithoutWorkload(t *testing.T) {
+	stream := &filter.Stream{Caller: filter.CallerContext{Subject: subject.Subject{
+		Sandbox: &subject.Sandbox{UID: "kruise:sbx"},
+	}}}
+	if got := sourceContext(stream); !reflect.DeepEqual(got, SourceContext{}) {
+		t.Fatalf("Sandbox identity projected as workload: %+v", got)
+	}
+}
 
 func testUnitID() filter.UnitID {
 	return filter.UnitID{Scope: "default/profile", Name: "inspect", Ordinal: 2}
 }
 
-// testStream mirrors what the engine hands a filter: a peer with a token that
+// testStream mirrors what the engine hands a filter: a caller with a token that
 // must never leave the mesh, and a request whose parsed Query disagrees with
 // RawQuery so a builder reading the wrong one is visible.
 func testStream() *filter.Stream {
 	return &filter.Stream{
-		Peer: filter.Peer{
-			Pod:    types.NamespacedName{Namespace: "default", Name: "agent-0"},
-			IP:     "10.0.0.8",
-			Labels: map[string]string{"app": "agent"},
-			Token:  &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"},
-		},
+		Caller:    filter.CallerContext{Token: &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"}, Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "agent-0", IP: "10.0.0.8", Labels: map[string]string{"app": "agent"}}}},
 		RequestID: "req-123",
 		Request: httpreq.HTTPRequest{
 			Host:     "api.example.com",
@@ -103,7 +106,7 @@ func TestBuildRequestInvocationMapsEveryField(t *testing.T) {
 	}
 	wantSource := SourceContext{
 		Namespace: "default",
-		Pod:       "agent-0",
+		Workload:  "agent-0",
 		IP:        "10.0.0.8",
 		Labels:    map[string]string{"app": "agent"},
 	}
@@ -604,7 +607,7 @@ func TestBuildInvocationNeverForwardsTheSandboxToken(t *testing.T) {
 		}
 	}
 	for _, value := range inv.Request.Headers {
-		if strings.Contains(value, st.Peer.Token.AccessToken) {
+		if strings.Contains(value, st.Caller.Token.AccessToken) {
 			t.Errorf("a forwarded header carried the sandbox access token: %q", value)
 		}
 	}

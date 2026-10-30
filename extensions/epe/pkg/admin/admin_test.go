@@ -84,9 +84,9 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 		wantSpec   bool // whether profiles[0].spec should be populated
 	}{
 		{
-			name:       "GET pod_labels triggers match mode, global then namespaced by priority",
+			name:       "GET workload_labels triggers match mode, global then namespaced by priority",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?namespace=default&pod_labels=app=sleep",
+			target:     "/debug/profiles?namespace=default&workload_labels=app=sleep",
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"gsp-egress", "sp-team"},
 			wantKinds:  []string{kindGlobalSecurityProfile, kindSecurityProfile},
@@ -96,7 +96,7 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 			name:       "POST with JSON body match mode",
 			method:     http.MethodPost,
 			target:     "/debug/profiles",
-			body:       `{"namespace":"default","pod_labels":{"app":"sleep"}}`,
+			body:       `{"namespace":"default","workload_labels":{"app":"sleep"}}`,
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"gsp-egress", "sp-team"},
 			wantKinds:  []string{kindGlobalSecurityProfile, kindSecurityProfile},
@@ -104,7 +104,7 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 		{
 			name:       "GET full mode populates spec",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?namespace=default&pod_labels=app=sleep&full=true",
+			target:     "/debug/profiles?namespace=default&workload_labels=app=sleep&full=true",
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"gsp-egress", "sp-team"},
 			wantSpec:   true,
@@ -113,7 +113,7 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 			name:       "POST full mode populates spec",
 			method:     http.MethodPost,
 			target:     "/debug/profiles",
-			body:       `{"namespace":"default","pod_labels":{"app":"sleep"},"full":true}`,
+			body:       `{"namespace":"default","workload_labels":{"app":"sleep"},"full":true}`,
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"gsp-egress", "sp-team"},
 			wantSpec:   true,
@@ -121,7 +121,7 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 		{
 			name:       "GET non-matching labels match nothing",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?namespace=default&pod_labels=app=other",
+			target:     "/debug/profiles?namespace=default&workload_labels=app=other",
 			wantStatus: http.StatusOK,
 			wantNames:  []string{},
 		},
@@ -129,21 +129,21 @@ func TestHandleProfiles_MatchMode(t *testing.T) {
 			name:       "POST non-matching labels match nothing",
 			method:     http.MethodPost,
 			target:     "/debug/profiles",
-			body:       `{"namespace":"default","pod_labels":{"app":"other"}}`,
+			body:       `{"namespace":"default","workload_labels":{"app":"other"}}`,
 			wantStatus: http.StatusOK,
 			wantNames:  []string{},
 		},
 		{
-			name:       "GET missing namespace with pod_labels is 400",
+			name:       "GET missing namespace with workload_labels is 400",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?pod_labels=app=sleep",
+			target:     "/debug/profiles?workload_labels=app=sleep",
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name:       "POST missing namespace with pod_labels is 400",
+			name:       "POST missing namespace with workload_labels is 400",
 			method:     http.MethodPost,
 			target:     "/debug/profiles",
-			body:       `{"pod_labels":{"app":"sleep"}}`,
+			body:       `{"workload_labels":{"app":"sleep"}}`,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -358,26 +358,26 @@ func TestHandleProfiles_InlineProfiles(t *testing.T) {
 		wantKinds  []string
 	}{
 		{
-			name:       "GET pod_name appends the inline profile after selector matches",
+			name:       "GET workload_name appends the inline profile after selector matches",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?namespace=sandboxes&pod_name=sbx-1&pod_labels=app=sleep",
+			target:     "/debug/profiles?namespace=sandboxes&workload_name=sbx-1&workload_labels=app=sleep",
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"sp-team", "sbx-1"},
 			wantKinds:  []string{kindSecurityProfile, kindSandbox},
 		},
 		{
-			name:       "GET pod_name alone triggers match mode",
+			name:       "GET workload_name alone triggers match mode",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?namespace=sandboxes&pod_name=sbx-1",
+			target:     "/debug/profiles?namespace=sandboxes&workload_name=sbx-1",
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"sbx-1"},
 			wantKinds:  []string{kindSandbox},
 		},
 		{
-			name:       "POST pod_name in body",
+			name:       "POST workload_name in body",
 			method:     http.MethodPost,
 			target:     "/debug/profiles",
-			body:       `{"namespace":"sandboxes","pod_name":"sbx-1"}`,
+			body:       `{"namespace":"sandboxes","workload_name":"sbx-1"}`,
 			wantStatus: http.StatusOK,
 			wantNames:  []string{"sbx-1"},
 			wantKinds:  []string{kindSandbox},
@@ -391,9 +391,9 @@ func TestHandleProfiles_InlineProfiles(t *testing.T) {
 			wantKinds:  []string{kindSandbox, kindSecurityProfile},
 		},
 		{
-			name:       "GET pod_name without namespace is 400",
+			name:       "GET workload_name without namespace is 400",
 			method:     http.MethodGet,
-			target:     "/debug/profiles?pod_name=sbx-1",
+			target:     "/debug/profiles?workload_name=sbx-1",
 			wantStatus: http.StatusBadRequest,
 		},
 	}
@@ -428,7 +428,7 @@ func TestHandleProfiles_InlineProfiles(t *testing.T) {
 
 	// Full mode decodes the annotation into the shared spec shape.
 	req := httptest.NewRequest(http.MethodGet,
-		"/debug/profiles?namespace=sandboxes&pod_name=sbx-1&full=true", nil)
+		"/debug/profiles?namespace=sandboxes&workload_name=sbx-1&full=true", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

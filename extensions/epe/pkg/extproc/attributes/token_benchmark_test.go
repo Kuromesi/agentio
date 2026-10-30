@@ -48,11 +48,11 @@ func BenchmarkExtractSandboxToken(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					peer, req := Extract(ctx, headers, attrs)
+					caller, req := Extract(ctx, headers, attrs)
 					for range uses {
-						benchSink = peer.Token.Parse(ctx)
+						benchSink = caller.Token.Parse(ctx)
 					}
-					benchSink = peer
+					benchSink = caller
 					benchSink = req
 				}
 			})

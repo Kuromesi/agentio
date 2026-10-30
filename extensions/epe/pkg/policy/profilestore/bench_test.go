@@ -17,8 +17,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -67,7 +67,7 @@ func BenchmarkMatches(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
+					benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
 				}
 			})
 		}
@@ -93,7 +93,7 @@ func BenchmarkMatches_Fallback(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
+				benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
 			}
 		})
 	}
@@ -127,7 +127,7 @@ func BenchmarkMatches_GlobalAndNamespaced(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.ProfilesFor(inputs.Pod{Namespace: "default", Labels: benchPodLabels})
+				benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
 			}
 		})
 	}

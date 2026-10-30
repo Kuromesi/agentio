@@ -59,7 +59,7 @@ func stsSecret() *corev1.Secret {
 
 func v3Request() *enginetest.RequestBuilder {
 	return enginetest.NewRequest("POST", "ecs.cn-hangzhou.aliyuncs.com", "/").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("host", "ecs.cn-hangzhou.aliyuncs.com").
 		Header("x-acs-content-sha256", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").
 		Header("authorization", "ACS3-HMAC-SHA256 Credential=OLDAK,SignedHeaders=host,Signature=stale").
@@ -97,7 +97,7 @@ func TestScenario_V1RPCQueryOnlyPOSTResignsWithoutBody(t *testing.T) {
 	verdict := h.Run(t, enginetest.NewRequest("POST", "ecs.cn-hangzhou.aliyuncs.com",
 		"/?Action=DescribeInstances&AccessKeyId=OLDAK&SecurityToken=OLDSTS"+
 			"&Signature=oldSignature&SignatureMethod=HMAC-SHA1&SignatureVersion=1.0").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("host", "ecs.cn-hangzhou.aliyuncs.com"))
 
 	verdict.RequireOutcome(t, "mutated")

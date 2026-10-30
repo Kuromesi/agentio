@@ -55,8 +55,8 @@ func TestHandleRequestHeaders_AuditEntry_NoProfileMatch_Passthrough(t *testing.T
 	if len(e.Actions) != 0 || len(e.Skipped) != 0 || e.Error != "" {
 		t.Errorf("expected empty actions/skipped/error, got %+v", e)
 	}
-	if e.Pod.Namespace != "default" || e.Pod.Name != "pod-x" {
-		t.Errorf("pod: want default/pod-x, got %s", e.Pod)
+	if e.Workload.Namespace != "default" || e.Workload.Name != "pod-x" {
+		t.Errorf("pod: want default/pod-x, got %s", e.Workload)
 	}
 	if e.Method != "GET" || e.Host != "api.example.com" || e.Path != "/x" {
 		t.Errorf("request fields wrong: %+v", e)

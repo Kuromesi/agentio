@@ -122,7 +122,7 @@ func benchPassthroughProfileYAML(name string) string {
 // and a query string, so header extraction and query parsing both do work.
 func benchRequest(path string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest("POST", "server.example.com", path).
-		Peer("test-ns", "sandbox-pod", benchLabels).
+		Workload("test-ns", "sandbox-pod", benchLabels).
 		Scheme("https").
 		SourceAddress("10.244.1.37:43210").
 		RequestID("3f2b8c1e-0d4a-4a7b-9c2f-1e5d8a6b4c30").
@@ -233,7 +233,7 @@ func BenchmarkRequest(b *testing.B) {
 // pays this instead of the numbers above, so it is the adapter's floor.
 func BenchmarkRequest_NoIdentity(b *testing.B) {
 	h := benchHarness(b, 1, benchArms[1]) // the blocked arm, never reached
-	// No Peer call, so attributes.Extract stops at the missing-identity check.
+	// No Workload call, so the request carries no identity.
 	msgs := enginetest.NewRequest("POST", "server.example.com", "/blocked").Build()
 	if got := h.RunMessages(b, msgs).Kind; got != enginetest.VerdictPassthrough {
 		b.Fatalf("verdict = %s, want passthrough for missing identity", got)

@@ -33,7 +33,7 @@ import (
 // which is exactly the production symptom (an erroring audit `when` silently
 // drops the event).
 func TestAuditScopeActivationShadowsResult(t *testing.T) {
-	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil), Result: "blocked"}
+	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil), Result: "blocked"}
 	tests := []struct {
 		name string
 		expr string
@@ -85,7 +85,7 @@ func populatedAuditScope() *Scope {
 	return &Scope{
 		Scope: *inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{Host: "example.com", Port: 443, Path: "/api/v1/data", Scheme: "https", Method: "POST", Query: map[string][]string{"tag": {"urgent"}}, Headers: map[string]string{"x-request-id": "abc"}}),
-			inputs.Pod{
+			inputs.Workload{
 				Name:      "agent-1",
 				Namespace: "default",
 				IP:        "10.0.0.5",
@@ -231,7 +231,7 @@ func TestAuditScopeResolvesResult(t *testing.T) {
 	s := &Scope{
 		Scope: *inputs.NewScope(
 			inputs.RequestFrom(httpreq.HTTPRequest{Host: "h", Port: 443, Path: "/", Scheme: "https", Method: "GET"}),
-			inputs.Pod{Namespace: "ns"},
+			inputs.Workload{Namespace: "ns"},
 			inputs.Profile{}, inputs.Rule{}, nil,
 		),
 		Result: "blocked",

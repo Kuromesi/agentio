@@ -99,7 +99,7 @@ func TestFilterContractConformance(t *testing.T) {
 			// The construction path must work with a real parsed config and
 			// a plain scope: New runs on the request hot path and may not
 			// panic or return a nil filter.
-			scope := inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)
+			scope := inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil)
 			f := reg.New(filter.ErasedRuleConfig{
 				ID:    filter.UnitID{Scope: "default/conformance", Name: "rule"},
 				Cfg:   cfg,

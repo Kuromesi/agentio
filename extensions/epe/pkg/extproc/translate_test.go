@@ -34,7 +34,7 @@ func TestTranslate_HeadersBodyMutationUsesContinueAndReplace(t *testing.T) {
 		Disposition: engine.DispositionMutated,
 		Body:        []byte("replaced"),
 	}
-	resp := translateRequestHeadersResult(er, logr.Discard(), filter.Peer{})
+	resp := translateRequestHeadersResult(er, logr.Discard(), filter.CallerContext{})
 	if len(resp) != 1 {
 		t.Fatalf("responses = %d, want 1", len(resp))
 	}
@@ -243,7 +243,7 @@ func TestTranslate_PathOpHonorsClearRouteCache(t *testing.T) {
 			HeaderOps:   []filter.HeaderOp{{Kind: filter.HeaderSet, Name: ":path", Value: "/new"}},
 			Route:       &filter.RouteMutation{ClearCache: clear},
 		}
-		resp := translateRequestHeadersResult(er, logr.Discard(), filter.Peer{})
+		resp := translateRequestHeadersResult(er, logr.Discard(), filter.CallerContext{})
 		common := resp[0].GetRequestHeaders().GetResponse()
 		if common.GetClearRouteCache() != clear {
 			t.Errorf("path rewrite did not preserve clearRouteCache=%v", clear)

@@ -25,9 +25,9 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 )
 
@@ -58,7 +58,7 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 	}
 	resolution, err := policysecurityprofile.NewResolver(store, regs, nil)(
 		context.Background(),
-		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		subject.Subject{Workload: subject.Workload{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}}},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
 	)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestResolverSkipsInitialProfileWithUnresolvedInputs(t *testing.T) {
 
 	resolution, err := policysecurityprofile.NewResolver(store, nil, nil)(
 		context.Background(),
-		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		subject.Subject{Workload: subject.Workload{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}}},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
 	)
 	if err != nil {

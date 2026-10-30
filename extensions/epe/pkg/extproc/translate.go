@@ -46,7 +46,7 @@ var routeAffectingHeaders = map[string]bool{
 func translateRequestHeadersResult(
 	reqHeadersRes *engine.RequestHeadersResult,
 	loggerD logr.Logger,
-	peer filter.Peer,
+	caller filter.CallerContext,
 ) []*extProcPb.ProcessingResponse {
 	if reqHeadersRes.Disposition == engine.DispositionBlocked {
 		return []*extProcPb.ProcessingResponse{immediateFromReply(reqHeadersRes.Reply)}
@@ -59,7 +59,7 @@ func translateRequestHeadersResult(
 	clearCache := reqHeadersRes.Route != nil && reqHeadersRes.Route.ClearCache
 	if len(reqHeadersRes.HeaderOps) == 0 && reqHeadersRes.Body == nil && !clearCache {
 		if reqHeadersRes.Disposition == engine.DispositionPassthrough {
-			loggerD.Info("no filter produced mutations; passthrough", "pod", peer.Pod.String())
+			loggerD.Info("no filter produced mutations; passthrough", "workload", caller.Subject.Workload.String(), "sandbox", caller.Subject.Sandbox.String())
 		}
 		return []*extProcPb.ProcessingResponse{applyRouteMutation(defaultPassThrough[0], reqHeadersRes.Route)}
 	}
@@ -134,21 +134,6 @@ func translateResponseBodyResult(respBodyRes *engine.ResponseBodyResult) []*extP
 		},
 	}}
 }
-
-// defaultPassThroughResponseBody is the immutable empty-mutation response-body
-// acknowledgement.
-var defaultPassThroughResponseBody = []*extProcPb.ProcessingResponse{{
-	Response: &extProcPb.ProcessingResponse_ResponseBody{
-		ResponseBody: &extProcPb.BodyResponse{},
-	},
-}}
-
-// emptyResponseHeadersAck is the immutable bare acknowledgement for response headers.
-var emptyResponseHeadersAck = []*extProcPb.ProcessingResponse{{
-	Response: &extProcPb.ProcessingResponse_ResponseHeaders{
-		ResponseHeaders: &extProcPb.HeadersResponse{},
-	},
-}}
 
 // commonResponse renders one direction's folded neutral mutations. Status is
 // response-only by engine validation. Body replacement always overwrites

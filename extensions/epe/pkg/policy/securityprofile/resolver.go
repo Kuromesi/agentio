@@ -21,6 +21,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // Matcher is the profile lookup NewResolver needs. It is declared here, on
@@ -28,11 +29,11 @@ import (
 // store holds *Profile values, so naming that package from this one would be
 // an import cycle. The profilestore Store satisfies this implicitly.
 //
-// ProfilesFor returns every profile that applies to the pod in evaluation
-// order: selector-matched administrator profiles first, then the pod's own
-// own pod-matched profile (looked up by exact identity, never by labels).
+// ResolveProfiles returns policies bound to the subject in evaluation order,
+// waiting for initial Sandbox policy readiness. The backend owns binding lookup;
+// callers do not depend on local selectors or the representation of xDS bindings.
 type Matcher interface {
-	ProfilesFor(pod inputs.Pod) []*Profile
+	ResolveProfiles(context.Context, subject.Subject) ([]*Profile, error)
 }
 
 // NewResolver adapts the SecurityProfile store and binder to the ext_proc
@@ -52,12 +53,15 @@ func NewResolver(matcher Matcher, regs []filter.Registration, sink audit.Sink) e
 	if sink == nil {
 		sink = audit.NopSink()
 	}
-	return func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		profiles := matcher.ProfilesFor(pod)
+	return func(ctx context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+		profiles, err := matcher.ResolveProfiles(ctx, subject)
+		if err != nil {
+			return engine.Resolution{}, err
+		}
 		if len(profiles) == 0 {
 			return engine.Resolution{}, nil
 		}
-		units, err := binder.bind(profiles, req, pod)
+		units, err := binder.bind(profiles, req, inputs.WorkloadFromSubject(subject))
 		if err != nil {
 			// The request fails closed, but the rules that matched still
 			// describe a stream worth recording. Returning the logger with

@@ -30,9 +30,9 @@ func TestCompileTemplateAndRender(t *testing.T) {
 		expectError string // compile error substring
 	}{
 		{"literal", "sk-abc123", nil, "sk-abc123", ""},
-		{"pod field", "{{ .Pod.Namespace }}", struct{ Pod inputs.Pod }{inputs.Pod{Namespace: "ns"}}, "ns", ""},
-		{"label helper", "{{ .Pod.Label \"app\" }}", struct{ Pod inputs.Pod }{inputs.Pod{Labels: map[string]string{"app": "x"}}}, "x", ""},
-		{"missingkey zero", "{{ .Pod.Labels.absent }}", struct{ Pod inputs.Pod }{inputs.Pod{Labels: map[string]string{}}}, "", ""},
+		{"pod field", "{{ .Pod.Namespace }}", struct{ Pod inputs.Workload }{inputs.Workload{Namespace: "ns"}}, "ns", ""},
+		{"label helper", "{{ .Pod.Label \"app\" }}", struct{ Pod inputs.Workload }{inputs.Workload{Labels: map[string]string{"app": "x"}}}, "x", ""},
+		{"missingkey zero", "{{ .Pod.Labels.absent }}", struct{ Pod inputs.Workload }{inputs.Workload{Labels: map[string]string{}}}, "", ""},
 		{"default helper", "{{ default \"fb\" .V }}", struct{ V string }{""}, "fb", ""},
 		{"json helper", "{{ json .V }}", struct{ V []string }{[]string{"a"}}, `["a"]`, ""},
 		{"fromJson map helper", "{{ range fromJson .V }}{{ . }}{{ end }}", struct{ V string }{`{"key":"value"}`}, "value", ""},

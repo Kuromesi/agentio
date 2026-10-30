@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // Package profilestore provides an in-memory store for SecurityProfiles.
-// Profile matching uses an immutable label index to select candidates from Pod
+// Profile matching uses an immutable label index to select candidates from workload
 // labels extracted from Envoy filter_state, then evaluates each candidate's
 // complete Kubernetes selector at request time.
 //
@@ -22,18 +22,21 @@
 package profilestore
 
 import (
+	"context"
+	"fmt"
 	"maps"
 	"sync"
 	"sync/atomic"
 
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
+	"github.com/openkruise/agentio/pkg/model"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -46,7 +49,7 @@ const (
 // dynamic label-based matching at request time via ProfilesFor.
 //
 // Cluster-scoped GlobalSecurityProfiles are stored under an empty-namespace
-// key and, unlike namespace-scoped SecurityProfiles, match pods in every
+// key and, unlike namespace-scoped SecurityProfiles, match workloads in every
 // namespace.
 //
 // Store is the read-only production surface consumed by the ext-proc data plane
@@ -54,25 +57,28 @@ const (
 // which replays and then tails a krt compiled-profile collection in batches.
 type Store interface {
 	// List returns all installed profiles: selector-matched ones (both
-	// namespace- and cluster-scoped) and per-Sandbox pod-matched profiles.
+	// namespace- and cluster-scoped) and per-Sandbox profiles.
 	List() []*securityprofile.Profile
 
-	// ProfilesFor returns the complete, ordered policy chain for one pod:
-	// profiles whose selectors match pod.Labels (cluster-scoped
+	// ProfilesFor returns the complete, ordered policy chain for one subject:
+	// profiles whose selectors match subject.Workload.Labels (cluster-scoped
 	// GlobalSecurityProfiles and namespace-scoped SecurityProfiles in
-	// pod.Namespace, sorted by priority, creation time, name, namespace),
-	// followed by the pod's own profile when one exists. Pod-matched
+	// subject.Workload.Namespace, sorted by priority, creation time, name, namespace),
+	// followed by the subject's own profile when one exists. Sandbox-matched
 	// profiles are keyed by exact identity — the Sandbox name is the
-	// Pod name — and always evaluate after the selector-matched
-	// administrator profiles. A zero pod.Name skips the identity lookup
+	// Workload name — and always evaluate after the selector-matched
+	// administrator profiles. A zero subject.Workload.Name skips the identity lookup
 	// (admin and debug paths that match by labels only).
-	ProfilesFor(pod inputs.Pod) []*securityprofile.Profile
+	ProfilesFor(subject subject.Subject) []*securityprofile.Profile
+
+	// ResolveProfiles gates requests on the Sandbox's first usable publication.
+	ResolveProfiles(context.Context, subject.Subject) ([]*securityprofile.Profile, error)
 }
 
 // profileKey identifies one installed profile. The match mode belongs in the
 // key for two reasons: a Sandbox and a SecurityProfile in one namespace may
 // share a name, and the mode is what decides how the profile is found — by
-// exact Pod identity, or through the label index. It is a uint8 rather than a
+// exact Sandbox source identity, or through the label index. It is a uint8 rather than a
 // string because this key is copied for every entry on every write.
 type profileKey struct {
 	match     securityprofile.MatchMode
@@ -92,8 +98,8 @@ func (k profileKey) name2() types.NamespacedName {
 
 // scope maps the key onto the bounded metric scope label.
 func (k profileKey) scope() string {
-	if k.match == securityprofile.MatchPod {
-		return scopePod
+	if k.match == securityprofile.MatchSandbox {
+		return scopeSandbox
 	}
 	return profileScope(k.namespace)
 }
@@ -109,27 +115,27 @@ func (k profileKey) scope() string {
 // at ten thousand profiles.
 type installedSet struct {
 	selector map[types.NamespacedName]*securityprofile.Profile
-	pod      map[types.NamespacedName]*securityprofile.Profile
+	sandbox  map[types.NamespacedName]*securityprofile.Profile
 }
 
-func newInstalledSet(selectorCap, podCap int) installedSet {
+func newInstalledSet(selectorCap, sandboxCap int) installedSet {
 	return installedSet{
 		selector: make(map[types.NamespacedName]*securityprofile.Profile, selectorCap),
-		pod:      make(map[types.NamespacedName]*securityprofile.Profile, podCap),
+		sandbox:  make(map[types.NamespacedName]*securityprofile.Profile, sandboxCap),
 	}
 }
 
 // clone is the copy-on-write step: the caller mutates the copy and publishes it.
 func (set installedSet) clone() installedSet {
-	next := newInstalledSet(len(set.selector), len(set.pod))
+	next := newInstalledSet(len(set.selector), len(set.sandbox))
 	maps.Copy(next.selector, set.selector)
-	maps.Copy(next.pod, set.pod)
+	maps.Copy(next.sandbox, set.sandbox)
 	return next
 }
 
 func (set installedSet) mapFor(match securityprofile.MatchMode) map[types.NamespacedName]*securityprofile.Profile {
-	if match == securityprofile.MatchPod {
-		return set.pod
+	if match == securityprofile.MatchSandbox {
+		return set.sandbox
 	}
 	return set.selector
 }
@@ -154,13 +160,13 @@ func (set installedSet) remove(k profileKey) bool {
 	return true
 }
 
-func (set installedSet) len() int { return len(set.selector) + len(set.pod) }
+func (set installedSet) len() int { return len(set.selector) + len(set.sandbox) }
 
 // profileSnapshot is an immutable point-in-time view of all profiles.
 // It is replaced atomically on every write operation (copy-on-write).
 //
-// installed is the storage. A pod-matched profile needs no index of its own,
-// because its key *is* its lookup — exact Pod identity. Selector profiles do,
+// installed is the storage. A per-Sandbox profile needs no index of its own,
+// because its key *is* its lookup — exact Sandbox source identity. Selector profiles do,
 // so selectorIndex is the label index derived from installed.selector, keyed by
 // namespace with cluster-scoped GlobalSecurityProfiles under the empty string.
 //
@@ -193,7 +199,9 @@ func NewStore() *store {
 
 type store struct {
 	snapshot atomic.Pointer[profileSnapshot]
-	mu       sync.Mutex // protects write path only
+	sandbox  func(context.Context, subject.Subject) (sandboxSource, bool, error)
+	mu       sync.Mutex // protects publication and pending requests
+	pending  map[model.ResourceKey]*pendingProfile
 	// degraded is write-path state, guarded by mu: which sources are currently
 	// stale, unenforced, or serving unresolved inputs. The gauges publish counts
 	// from it, so the metric surface stays three series per gauge no matter how
@@ -207,8 +215,22 @@ type store struct {
 // subsequent krt event batch triggers one copy-on-write snapshot rebuild.
 // The returned registration's WaitUntilSynced gates readiness on the initial
 // replay having been delivered.
-func (s *store) RegisterCollection(profiles krt.Collection[securityprofile.Profile]) krt.HandlerRegistration {
+func (s *store) RegisterCollection(profiles *Collection) krt.HandlerRegistration {
+	s.sandbox = profiles.sandbox
 	return profiles.RegisterBatch(s.applyBatch, true)
+}
+
+// NotifyKeys wakes initial requests when raw sources disappear, before compilation
+// or debounce publishes their removals. The installed snapshot remains immutable.
+func (s *store) NotifyKeys(keys []model.ResourceKey) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	old := s.snapshot.Load()
+	// Invalidate checks that started before this raw-source notification but have not registered yet.
+	s.snapshot.Store(reuseSnapshot(old, old.installed))
+	for _, key := range keys {
+		s.notifyPendingLocked(key)
+	}
 }
 
 // applyBatch folds one krt event batch into a new snapshot. Every source is
@@ -226,6 +248,14 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 	log := ctrllog.Log.WithName("profile")
 
 	old := s.snapshot.Load()
+	defer func() {
+		for _, event := range events {
+			meta := event.Latest().Meta
+			if meta.Match == securityprofile.MatchSandbox {
+				s.notifyPendingLocked(sandboxProfileKey(meta.Namespace, meta.Name))
+			}
+		}
+	}()
 	installed := old.installed.clone()
 	// Only selector profiles feed the label index, so a batch that touched
 	// nothing but per-Sandbox profiles can carry the previous index forward
@@ -246,6 +276,10 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 		}
 		sp := ev.New
 		key := keyFor(sp.Meta)
+		if previous, ok := installed.get(key); ok && key.match == securityprofile.MatchSandbox &&
+			(previous.Meta.SourceIdentity != sp.Meta.SourceIdentity || previous.Meta.SandboxUID != sp.Meta.SandboxUID) {
+			installed.remove(key)
+		}
 		// One last-known-good contract for every source: an invalid version
 		// leaves the prior effective one installed, and a first version that
 		// never compiled installs nothing.
@@ -256,7 +290,7 @@ func (s *store) applyBatch(events []krt.Event[securityprofile.Profile]) {
 			// The two outcomes differ in severity and get separate gauges.
 			// Stale means an older version is still enforcing; unenforced means
 			// nothing of this policy is in effect at all — for a selector
-			// profile the Pods it targets are unprotected, for a per-Sandbox
+			// profile the workloads it targets are unprotected, for a per-Sandbox
 			// one that Sandbox has none of its own rules.
 			if wasInstalled {
 				log.Error(nil, "policy version rejected; retaining last-known-good version",
@@ -297,38 +331,83 @@ func (s *store) List() []*securityprofile.Profile {
 	for _, p := range snap.installed.selector {
 		result = append(result, p)
 	}
-	for _, p := range snap.installed.pod {
+	for _, p := range snap.installed.sandbox {
 		result = append(result, p)
 	}
 	return result
 }
 
-func (s *store) ProfilesFor(pod inputs.Pod) []*securityprofile.Profile {
+func (s *store) ProfilesFor(subject subject.Subject) []*securityprofile.Profile {
 	snap := s.snapshot.Load()
+	return profilesFor(snap, subject)
+}
 
-	ls := labels.Set(pod.Labels)
-	matched := snap.selectorIndex[GlobalProfileNamespace].appendMatches(ls, nil)
-	if pod.Namespace != GlobalProfileNamespace {
-		matched = snap.selectorIndex[pod.Namespace].appendMatches(ls, matched)
+// ResolveProfiles waits only for the Sandbox's first usable publication.
+// Later updates of the same UID may use the last known-good version.
+func (s *store) ResolveProfiles(ctx context.Context, subject subject.Subject) ([]*securityprofile.Profile, error) {
+	w := subject.Workload
+	if subject.Sandbox != nil && (w.Namespace == "" || w.Name == "") {
+		return nil, fmt.Errorf("local profile lookup requires workload namespace and name")
 	}
-	// Candidate iteration crosses the fallback list and Pod label buckets, whose
+	if s.sandbox != nil && w.UID != "" && (w.Namespace == "" || w.Name == "") {
+		return nil, fmt.Errorf("local profile lookup requires workload namespace and name")
+	}
+	if s.sandbox == nil || subject.Workload.Name == "" {
+		return s.ProfilesFor(subject), nil
+	}
+	for {
+		snap := s.snapshot.Load()
+		source, found, err := s.sandbox(ctx, subject)
+		if err != nil {
+			return nil, fmt.Errorf("look up sandbox for workload %s: %w", w.String(), err)
+		}
+		if !found {
+			return selectorProfilesFor(snap, subject.Workload), nil
+		}
+		if profile := snap.installed.sandbox[source.name]; profile != nil && profile.Meta.SourceIdentity == source.identity &&
+			(subject.Sandbox == nil || profile.Meta.SandboxUID == subject.Sandbox.UID) {
+			return append(selectorProfilesFor(snap, w), profile), nil
+		}
+		if err := s.waitForProfileChange(ctx, source.name, snap); err != nil {
+			return nil, fmt.Errorf("wait for sandbox %s policy: %w", source.name, err)
+		}
+	}
+}
+
+func profilesFor(snap *profileSnapshot, subject subject.Subject) []*securityprofile.Profile {
+	return appendSandboxProfile(selectorProfilesFor(snap, subject.Workload), snap, subject)
+}
+
+func selectorProfilesFor(snap *profileSnapshot, workload subject.Workload) []*securityprofile.Profile {
+	// Missing metadata is not a query for all global profiles.
+	if workload.UID == "" && workload.Namespace == "" && workload.Name == "" &&
+		workload.IP == "" && len(workload.Labels) == 0 {
+		return nil
+	}
+	ls := labels.Set(workload.Labels)
+	matched := snap.selectorIndex[GlobalProfileNamespace].appendMatches(ls, nil)
+	if workload.Namespace != GlobalProfileNamespace {
+		matched = snap.selectorIndex[workload.Namespace].appendMatches(ls, matched)
+	}
+	// Candidate iteration crosses the fallback list and workload label buckets, whose
 	// order is not the policy evaluation order. Restore the shared precedence
 	// contract after the global and namespaced matches have been merged.
 	if len(matched) > 1 {
 		securityprofile.SortProfiles(matched)
 	}
-	return appendPodProfile(matched, snap, pod)
+	return matched
 }
 
-// appendPodProfile adds the pod's own profile after the selector-matched
+// appendSandboxProfile adds the subject's own profile after the selector-matched
 // administrator profiles: tenant rules must never evaluate ahead of them. It is
-// one map lookup, because identity is the storage key. A zero pod.Name (e.g.
+// one map lookup, because identity is the storage key. A zero subject.Workload.Name (e.g.
 // the admin listing endpoint) skips the lookup.
-func appendPodProfile(matched []*securityprofile.Profile, snap *profileSnapshot, pod inputs.Pod) []*securityprofile.Profile {
-	if pod.Name == "" {
+func appendSandboxProfile(matched []*securityprofile.Profile, snap *profileSnapshot, subject subject.Subject) []*securityprofile.Profile {
+	if subject.Workload.Name == "" {
 		return matched
 	}
-	if p, ok := snap.installed.pod[types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}]; ok {
+	if p, ok := snap.installed.sandbox[types.NamespacedName{Namespace: subject.Workload.Namespace, Name: subject.Workload.Name}]; ok &&
+		(subject.Sandbox == nil || p.Meta.SandboxUID == subject.Sandbox.UID) {
 		return append(matched, p)
 	}
 	return matched
@@ -344,7 +423,7 @@ func reuseSnapshot(old *profileSnapshot, installed installedSet) *profileSnapsho
 }
 
 // buildSnapshot takes ownership of installed and derives the label index from
-// its selector half. Pod-matched profiles are not in it: they are found by
+// its selector half. Sandbox-matched profiles are not in it: they are found by
 // identity, and letting them into the label index is exactly the confusion the
 // two lookups exist to prevent.
 func buildSnapshot(installed installedSet) *profileSnapshot {

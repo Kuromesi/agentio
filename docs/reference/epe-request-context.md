@@ -34,22 +34,24 @@ Without an explicit target, EPE resolves the request Host first. It prefers the 
 
 The `route` filter is an EPE building block, not public SecurityProfile routing configuration. Public HeaderMutation configuration and HTTP callout responses continue to reject Host and pseudo-header mutations. No target-reselection operation is provided. Target authorization is enabled by default. Global `EPEConfig.egressAuthorization.deniedCIDRs` restrictions apply before optional xDS TrafficPolicy rules, enabled with `--enable-xds-egressauthz`. Keep request-header processing enabled and transport failures configured to fail closed. Upgrade the gateway and EPE together. See [configuration and migration](epe-configuration.md#global-destination-authorization).
 
-## Source peer and stream information
+## Caller context and stream information
 
-Envoy filter-state attributes identify the caller:
+`Stream.Caller` contains a `CallerContext`: its `Subject` holds Workload/Sandbox identity, and its `Token` holds the credential. HTTP request/response data and execution observations remain on `Stream`. Envoy filter-state attributes identify the caller:
 
 | EPE stream field | Envoy attribute | Type | Absence behavior |
 | --- | --- | --- | --- |
-| Pod namespace | `filter_state['agentio.workload.namespace']` | string | Captured from `x-agentio-workload-namespace` on HBONE CONNECT. Missing or empty falls back to `filter_state['downstream_peer'].namespace`; empty after fallback makes the peer invalid. |
-| Pod name | `filter_state['agentio.workload.name']` | string | Captured from `x-agentio-workload-name` on HBONE CONNECT. Missing or empty falls back to `filter_state['downstream_peer'].name`; empty after fallback makes the peer invalid. |
-| Pod IP | `source.address` | string | EPE removes a valid port and surrounding IPv6 brackets. It is empty when absent; otherwise malformed input may be preserved after this syntactic stripping. |
+| Workload UID | `filter_state['agentio.workload.uid']` | string | Optional canonical discovery resource name. The default gateway does not yet populate/export this attribute; when absent, the current backends use namespace/name. Not expression-visible. |
+| Sandbox UID | `filter_state['sandbox.id']` | string | Optional canonical discovery resource name captured on CONNECT. When present, selects Sandbox metadata by discovery UID, independently of the Workload name. An absent value leaves the same-name Kubernetes lookup in effect. Not expression-visible. |
+| Workload namespace | `filter_state['agentio.workload.namespace']` | string | Captured from `x-agentio-workload-namespace` on HBONE CONNECT. Missing or empty falls back to `filter_state['downstream_peer'].namespace`; without a Workload UID, both namespace and name are required to identify the Workload. |
+| Workload name | `filter_state['agentio.workload.name']` | string | Captured from `x-agentio-workload-name` on HBONE CONNECT. Missing or empty falls back to `filter_state['downstream_peer'].name`; without a Workload UID, both namespace and name are required to identify the Workload. |
+| Workload IP | `source.address` | string | EPE removes a valid port and surrounding IPv6 brackets. It is empty when absent; otherwise malformed input may be preserved after this syntactic stripping. |
 | Workload labels | `filter_state['agentio.workload.labels']` | map<string, string> | Parsed from base64 `k=v,k2=v2`; falls back to legacy `filter_state['sandbox.labels']` only when the new attribute is absent. A present empty or invalid new value does not fall back. |
 | Sandbox token | `filter_state['sandbox.token']` | internal object | Base64 JSON or raw JSON with `requestId`, `accessToken`, and `sandboxClientId`. Retained without decoding until token transformation or OAuth2 needs it; decoded once per request, including malformed input. Missing or malformed values remain unavailable to credential consumers. This parses the envelope without validating the access token. Not expression-visible. |
 | Request ID | `x-request-id` | string | Empty when absent. Used for log correlation, not expression evaluation. |
 
 ztunnel sets these headers from the source Pod's name and namespace, not its owning Deployment. The gateway preserves them in filter state across internal HTTP/TLS hops and exports them in EPE request attributes. EPE reads this captured context, not same-named headers on the inner application request. Default gateway access logs use the same per-field precedence for `workload_name` and `workload_namespace`, replacing `sandbox_name` and `sandbox_namespace`.
 
-Both Pod namespace and name are required for profile selection. Without them EPE skips profiles but still checks global destination restrictions and pins an allowed target. Enabling xDS authorization or `--fail-closed-on-missing-identity` rejects requests without identity. The token is consumed only by provider-backed credential transformations; its bearer `accessToken` is never exposed in `request`, `pod`, `inputs`, templates, CEL, or audit context.
+The request boundary recognizes a Workload UID, complete Workload namespace/name, or a Sandbox UID as supplied identity and passes it to policy resolution. With none of these, EPE skips profiles but still checks global destination restrictions and pins an allowed target. The current Kubernetes SecurityProfile backend still requires Workload namespace/name; UID-only requests reach it and fail closed when that metadata is unavailable. TrafficPolicy accepts a Workload UID without namespace/name, but a Sandbox UID alone does not identify its Workload. Enabling xDS authorization or `--fail-closed-on-missing-identity` rejects requests without identity. The token is consumed only by provider-backed credential transformations; its bearer `accessToken` is never exposed in `request`, `pod`, `inputs`, templates, CEL, or audit context.
 
 The filter stream also records matched profile/rule actions, filter outcomes, final disposition (`passthrough`, `mutated`, `blocked`, `bypassed`, or `error`), any resolved error text, and bytes forwarded before a verdict. These are internal/audit observations, not general CEL variables.
 
@@ -57,7 +59,7 @@ The filter stream also records matched profile/rule actions, filter outcomes, fi
 
 | Phase | Available data | Mutability and limits |
 | --- | --- | --- |
-| Request headers | Request tuple, peer identity, profile/rule, and resolved inputs. | Matching and header transformations occur here. `block` and `bypass` are header-only. |
+| Request headers | Request tuple, Workload/Sandbox identity, profile/rule, and resolved inputs. | Matching and header transformations occur here. `block` and `bypass` are header-only. |
 | Request body | The same request context plus a complete buffered body only for actions that request it. | Current body consumers are MCP ACL and body-dependent signing. The body is not exposed to CEL/templates. Buffered mode prevents bytes from reaching upstream before the verdict. |
 | Response headers | Upstream response status and lowercased response headers are recorded on the stream. | The current response phase is observation-only: filters cannot mutate response headers. Only status reaches audit CEL/templates. |
 | Stream end | Final disposition and response status, if response headers arrived. | Audit actions are evaluated asynchronously; they cannot modify the already-resolved request or upstream response. |

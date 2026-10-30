@@ -22,11 +22,10 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/types"
-
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/eval"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 type fakeSource struct {
@@ -85,7 +84,7 @@ func newTestFilter(secret, provider CredentialSource, cfg Config) *Filter {
 	return &Filter{
 		sources: Sources{Secret: secret, Provider: provider},
 		signers: map[string]Signer{TypeAPIKey: apiKeySigner{}},
-		rule:    filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil)},
+		rule:    filter.RuleConfig[Config]{Cfg: cfg, Scope: inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil)},
 	}
 }
 
@@ -108,14 +107,11 @@ func withHeaderCondition(cfg Config) Config {
 }
 
 func streamWithPeerToken() *filter.Stream {
-	return &filter.Stream{Peer: filter.Peer{
-		Pod:   types.NamespacedName{Namespace: "podns", Name: "pod-x"},
-		Token: &filter.SandboxToken{AccessToken: "at", SandboxClientID: "cid"},
-	}}
+	return &filter.Stream{Caller: filter.CallerContext{Token: &filter.SandboxToken{AccessToken: "at", SandboxClientID: "cid"}, Subject: subject.Subject{Workload: subject.Workload{Namespace: "podns", Name: "pod-x"}}}}
 }
 
 func streamWithoutPeerToken() *filter.Stream {
-	return &filter.Stream{Peer: filter.Peer{Pod: types.NamespacedName{Namespace: "podns", Name: "pod-x"}}}
+	return &filter.Stream{Caller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "podns", Name: "pod-x"}}}}
 }
 
 func TestFilterRejectsCONNECTBeforeFetchingTargetCredential(t *testing.T) {
@@ -160,7 +156,7 @@ func TestFilterSignerPreparationBeforeCredentialFetch(t *testing.T) {
 		}
 	})
 
-	t.Run("empty preparation skips provider without a peer token", func(t *testing.T) {
+	t.Run("empty preparation skips provider without a caller token", func(t *testing.T) {
 		provider := &fakeSource{}
 		cfg := Config{Type: TypeAPIKey, Source: SourceSpec{Kind: SourceKindProvider, Name: "provider"}, SignerCfg: "original"}
 		f := newTestFilter(nil, provider, cfg)
@@ -414,22 +410,35 @@ func TestFilterSecretNamespaceFallback(t *testing.T) {
 	cfg := secretCfg(false)
 	cfg.Source.Namespace = "" // force fallback
 	f := newTestFilter(src, nil, cfg)
-	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{Namespace: "profilens"}, inputs.Rule{}, nil)
+	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{Namespace: "profilens"}, inputs.Rule{}, nil)
 	_, _ = f.OnRequestHeaders(context.Background(), streamWithPeerToken())
 	if len(src.got) != 1 || src.got[0].Namespace != "profilens" {
 		t.Fatalf("ref = %+v, want profile-namespace fallback", src.got)
 	}
 }
 
-func TestFilterSecretNamespaceFallbackToPod(t *testing.T) {
+func TestFilterSecretNamespaceFallbackToWorkload(t *testing.T) {
 	src := &fakeSource{cred: Credential{Token: "k"}}
 	cfg := secretCfg(false)
 	cfg.Source.Namespace = ""
 	f := newTestFilter(src, nil, cfg)
-	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil) // no profile namespace
+	f.rule.Scope = inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil) // no profile namespace
 	_, _ = f.OnRequestHeaders(context.Background(), streamWithPeerToken())
 	if len(src.got) != 1 || src.got[0].Namespace != "podns" {
-		t.Fatalf("ref = %+v, want pod-namespace fallback", src.got)
+		t.Fatalf("ref = %+v, want workload-namespace fallback", src.got)
+	}
+}
+
+func TestFilterRejectsSecretWithoutNamespace(t *testing.T) {
+	src := &fakeSource{cred: Credential{Token: "must-not-be-read"}}
+	cfg := secretCfg(true)
+	cfg.Source.Namespace = ""
+	f := newTestFilter(src, nil, cfg)
+	stream := streamWithPeerToken()
+	stream.Caller.Subject = subject.Subject{Sandbox: &subject.Sandbox{UID: "kruise:sbx"}}
+	action, err := f.OnRequestHeaders(t.Context(), stream)
+	if err != nil || action.Kind() != filter.KindStop || len(src.got) != 0 {
+		t.Fatalf("missing namespace: action=%v err=%v fetched=%v", action.Kind(), err, src.got)
 	}
 }
 

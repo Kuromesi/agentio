@@ -32,10 +32,10 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
-func resolveNone(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+func resolveNone(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 	return engine.Resolution{}, nil
 }
 

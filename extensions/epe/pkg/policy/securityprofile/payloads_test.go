@@ -241,7 +241,7 @@ func TestBindRefusesUnprojectedProfile(t *testing.T) {
 
 	unprojected := compile(t, nil, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	unprojected.Projections = nil
-	if _, err := b.bind([]*Profile{unprojected}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+	if _, err := b.bind([]*Profile{unprojected}, testRequest("example.com"), inputs.Workload{}); err == nil ||
 		!strings.Contains(err.Error(), "was not projected") {
 		t.Fatalf("bind(unprojected) = %v, want a not-projected error", err)
 	}
@@ -263,7 +263,7 @@ func TestBindRefusesUnprojectedProfile(t *testing.T) {
 		t.Fatalf("register: %v", err)
 	}
 	mismatched := compile(t, otherChain, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
-	if _, err := b.bind([]*Profile{mismatched}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+	if _, err := b.bind([]*Profile{mismatched}, testRequest("example.com"), inputs.Workload{}); err == nil ||
 		!strings.Contains(err.Error(), "different filter chain") {
 		t.Fatalf("bind(mismatched) = %v, want a chain-mismatch error", err)
 	}
@@ -287,7 +287,7 @@ func TestBindRefusesUnprojectedProfile(t *testing.T) {
 	}
 	swapped := compile(t, reordered, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	twoFilterBinder := newBinder(otherChain)
-	if _, err := twoFilterBinder.bind([]*Profile{swapped}, testRequest("example.com"), inputs.Pod{}); err == nil ||
+	if _, err := twoFilterBinder.bind([]*Profile{swapped}, testRequest("example.com"), inputs.Workload{}); err == nil ||
 		!strings.Contains(err.Error(), "different filter chain") {
 		t.Fatalf("bind(reordered chain) = %v, want a chain-mismatch error", err)
 	}

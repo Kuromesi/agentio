@@ -74,7 +74,7 @@ func newBinder(regs []filter.Registration) *binder {
 // one has no usable Cfgs — but they carry the profile/rule attribution the
 // audit stream logger needs, so a stream that fails to resolve can still be
 // recorded. Callers that evaluate must discard the list when err != nil.
-func (b *binder) bind(profiles []*Profile, req *httpreq.HTTPRequest, pod inputs.Pod) ([]unit, error) {
+func (b *binder) bind(profiles []*Profile, req *httpreq.HTTPRequest, workload inputs.Workload) ([]unit, error) {
 	request := inputs.RequestFrom(*req)
 
 	var units []unit
@@ -105,7 +105,7 @@ func (b *binder) bind(profiles []*Profile, req *httpreq.HTTPRequest, pod inputs.
 						Ordinal: len(units),
 					},
 					Scope: inputs.NewScope(
-						request, pod,
+						request, workload,
 						inputs.Profile{Name: profile.Meta.Name, Namespace: profile.Meta.Namespace},
 						inputs.Rule{Name: rule.Name},
 						profile.Inputs,

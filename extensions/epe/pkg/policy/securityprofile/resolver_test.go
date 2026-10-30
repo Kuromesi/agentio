@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -24,6 +25,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // A matched resolution must carry the per-stream audit logger. Nothing else
@@ -36,12 +38,17 @@ func TestResolverSuppliesStreamLoggerWhenPolicyMatches(t *testing.T) {
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
-	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
+	subject := subject.Subject{Workload: subject.Workload{UID: "native:workload", Name: "pod", Namespace: "ns", IP: "192.0.2.1", Labels: map[string]string{"app": "test"}}, Sandbox: &subject.Sandbox{UID: "kruise:sandbox"}}
+	res, err := resolve(context.Background(), subject, testRequest("example.com"))
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
 	if len(res.Units) != 1 {
 		t.Fatalf("units = %d, want 1", len(res.Units))
+	}
+	wantWorkload := inputs.Workload{Name: "pod", Namespace: "ns", IP: "192.0.2.1", Labels: map[string]string{"app": "test"}}
+	if got := res.Units[0].Scope.Pod(); !reflect.DeepEqual(got, wantWorkload) {
+		t.Fatalf("expression pod = %+v, want %+v", got, wantWorkload)
 	}
 	if res.StreamLogger == nil {
 		t.Fatal("resolution carries no stream logger; audit events would never fire")
@@ -67,7 +74,7 @@ func TestResolverSuppliesStreamLoggerWhenProjectionFails(t *testing.T) {
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
-	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
+	res, err := resolve(context.Background(), subject.Subject{}, testRequest("example.com"))
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the wrapped projection error", err)
 	}
@@ -97,7 +104,7 @@ func TestResolverOmitsStreamLoggerWhenNothingMatches(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resolve := NewResolver(tc.store, regs, nil)
-			res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
+			res, err := resolve(context.Background(), subject.Subject{}, testRequest("example.com"))
 			if err != nil {
 				t.Fatalf("resolve: %v", err)
 			}
@@ -120,7 +127,7 @@ func TestResolverNilSinkBecomesNoop(t *testing.T) {
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
-	res, err := resolve(context.Background(), inputs.Pod{}, testRequest("example.com"))
+	res, err := resolve(context.Background(), subject.Subject{}, testRequest("example.com"))
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

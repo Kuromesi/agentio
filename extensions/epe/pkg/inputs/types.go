@@ -17,19 +17,26 @@ import (
 	"strings"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
-// Pod describes the source Sandbox pod. Exposed to templates as
+// Workload is the source Workload's expression view. Exposed to templates as
 // {{ .Pod.* }} and projected into CEL activations as the `pod` variable.
-type Pod struct {
+type Workload struct {
 	Name      string
 	Namespace string
 	IP        string
 	Labels    map[string]string
 }
 
-// Label returns the named pod label value, or empty string when absent.
-func (p Pod) Label(key string) string {
+// WorkloadFromSubject preserves the expression vocabulary independently of policy identity.
+func WorkloadFromSubject(subject subject.Subject) Workload {
+	w := subject.Workload
+	return Workload{Name: w.Name, Namespace: w.Namespace, IP: w.IP, Labels: w.Labels}
+}
+
+// Label returns the named workload label value, or empty string when absent.
+func (p Workload) Label(key string) string {
 	if p.Labels == nil {
 		return ""
 	}

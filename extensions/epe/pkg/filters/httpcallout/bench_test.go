@@ -20,10 +20,9 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/types"
-
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // These benchmarks price what a callout costs EPE, not what it costs the
@@ -83,12 +82,7 @@ func benchStream(nOperator int) *filter.Stream {
 		respHeaders["x-upstream-"+suffix] = "response-value-" + suffix
 	}
 	return &filter.Stream{
-		Peer: filter.Peer{
-			Pod:    types.NamespacedName{Namespace: "default", Name: "agent-0"},
-			IP:     "10.0.0.8",
-			Labels: map[string]string{"app": "agent", "version": "v2"},
-			Token:  &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"},
-		},
+		Caller:    filter.CallerContext{Token: &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"}, Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "agent-0", IP: "10.0.0.8", Labels: map[string]string{"app": "agent", "version": "v2"}}}},
 		RequestID: benchRequestID,
 		Request: httpreq.HTTPRequest{
 			Host:     "api.example.com",

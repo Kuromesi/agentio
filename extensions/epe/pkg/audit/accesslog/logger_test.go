@@ -90,13 +90,13 @@ func waitFor(t *testing.T, timeout time.Duration, fn func() bool) {
 
 func sampleEntry(suffix string) Entry {
 	return Entry{
-		Pod:     types.NamespacedName{Namespace: "default", Name: "pod-" + suffix},
-		Method:  "POST",
-		Host:    "api.openai.com",
-		Path:    "/v1/chat/completions",
-		Units:   1,
-		Outcome: "mutated",
-		Actions: []string{"mutator:mutate:default/p/r#0"},
+		Workload: types.NamespacedName{Namespace: "default", Name: "pod-" + suffix},
+		Method:   "POST",
+		Host:     "api.openai.com",
+		Path:     "/v1/chat/completions",
+		Units:    1,
+		Outcome:  "mutated",
+		Actions:  []string{"mutator:mutate:default/p/r#0"},
 	}
 }
 
@@ -146,13 +146,13 @@ func TestBufferedLogger_SubmitAndEmit(t *testing.T) {
 
 	l.Submit(sampleEntry("a"))
 	l.Submit(Entry{
-		Pod:     types.NamespacedName{Namespace: "ns", Name: "pod-err"},
-		Method:  "GET",
-		Host:    "h",
-		Path:    "/p",
-		Outcome: "error",
-		Skipped: []string{"mutator:error-open:ns/p/r#0"},
-		Error:   "boom",
+		Workload: types.NamespacedName{Namespace: "ns", Name: "pod-err"},
+		Method:   "GET",
+		Host:     "h",
+		Path:     "/p",
+		Outcome:  "error",
+		Skipped:  []string{"mutator:error-open:ns/p/r#0"},
+		Error:    "boom",
 	})
 
 	waitFor(t, time.Second, func() bool { return len(sink.snapshot()) == 2 })

@@ -44,6 +44,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	calloutfixture "github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
@@ -186,7 +187,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 	}
 	server := extproc.NewServer(extproc.ServerDeps{Registrations: regs,
 		FailClosedOnMissingIdentity: true,
-		Resolve: func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(_ context.Context, pod subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
 			if req.Path == "/baseline" {
 				return engine.Resolution{}, nil
 			}
@@ -196,7 +197,7 @@ func newFixtureWithEndpoints(t *testing.T, endpointURL, upstreamURL string) *fix
 			}
 			scope := inputs.NewScope(
 				inputs.RequestFrom(*req),
-				pod,
+				inputs.WorkloadFromSubject(pod),
 				inputs.Profile{Name: "test", Namespace: "default"},
 				inputs.Rule{Name: "callout"},
 				nil,

@@ -34,9 +34,9 @@ import (
 	sec "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
 	xdsbackend "github.com/openkruise/agentio/extensions/epe/pkg/store/xds"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/model"
 	controlxds "github.com/openkruise/agentio/pkg/xds"
 	controlstore "github.com/openkruise/agentio/pkg/xds/store"
@@ -181,11 +181,11 @@ func TestDemandDiscovery(t *testing.T) {
 		}
 	}
 	resolver := &resolver{source: aggregate}
-	pod := inputs.Pod{Namespace: "ns", Name: "pod"}
+	subj := subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}
 	target := netip.MustParseAddrPort("203.0.113.7:443")
 	checkAction := func(want egressauthz.Action) {
 		t.Helper()
-		cfg, err := resolver.config(ctx, pod)
+		cfg, err := resolver.config(ctx, subj)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +219,7 @@ func TestDemandDiscovery(t *testing.T) {
 		snapshot := client.Snapshot()
 		return len(snapshot.Resources[model.WorkloadType]) == 0 && len(snapshot.Resources[model.TrafficPolicyType]) == 0
 	})
-	if _, err := resolver.config(ctx, pod); err == nil {
+	if _, err := resolver.config(ctx, subj); err == nil {
 		t.Fatal("deleted Workload authorized")
 	}
 	apply(model.ResourceChange{Key: requestedWorkload.Key, New: &requestedWorkload},
