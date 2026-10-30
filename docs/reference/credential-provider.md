@@ -22,7 +22,7 @@ sandbox ──> egress gateway ──ext_proc──> EPE ──HTTPS/mTLS──>
    agent-identity.access-token=...,agent-identity.sandbox-client-id=...
    ```
 
-   Values are percent-encoded; `+` remains literal. Enable `SANDBOX_TOKEN_ENABLED=true` on the ztunnel container and mount the token producer's directory at `/var/opt/sandbox/agent-token` (or set `SANDBOX_TOKEN_PATH`). Token files still contain JSON with `accessToken` and `sandboxClientId`. Ordinary sidecars leave token reading disabled unless configured. Ambient Sandbox Manager integration is not supported.
+   Values are percent-encoded; `+` remains literal. Set Helm `sandbox.enabled=true` to enable the sidecar Sandbox Manager. Enable `SANDBOX_TOKEN_ENABLED=true` on the ztunnel container and mount the token producer's directory at `/var/opt/sandbox/agent-token` (or set `SANDBOX_TOKEN_PATH`). Token files still contain JSON with `accessToken` and `sandboxClientId`. The Sandbox switch does not enable token reading or supply credentials automatically. Ambient Sandbox Manager integration is not supported.
 
    For older gateways and ztunnels, EPE accepts the existing base64/raw JSON `filter_state['sandbox.token']` only when the metadata attribute is absent. Present but malformed metadata does not fall back to a legacy identity.
 

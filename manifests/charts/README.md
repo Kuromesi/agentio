@@ -7,6 +7,9 @@ Agentio is installed as one Helm release. The `profile` value selects the data p
 ```yaml
 profile: sidecar # recommended; ambient is in Alpha
 
+sandbox:
+  enabled: false # ordinary Workloads by default; true requires sidecar
+
 egressGateway:
   mode: disabled # disabled | static | gatewayAPI
 
@@ -23,6 +26,29 @@ epe:
 The chart installs the four Agentio policy CRDs. Helm retains resources from the chart's `crds/` directory when the release is uninstalled.
 
 ## Sidecar mode
+
+### Sandbox support
+
+Set `sandbox.enabled: true` to enable Kruise Sandbox discovery and xDS output
+in Agentiod, Sandbox inline security rules in managed EPE, and the Sandbox
+Manager in injected sidecars. Ordinary Workloads remain supported. The sidecar
+gets a writable `/var/lib/ztunnel/sandbox` volume only when enabled.
+
+The default, `false`, runs in ordinary Workload mode without those Sandbox
+capabilities. `profile: ambient` with `sandbox.enabled: true` is rejected because
+Ambient Sandbox Manager integration is not supported.
+
+Replace existing `agentiod.env.AGENTIO_SANDBOX_MODE` and
+`agentiod.env.AGENTIO_SANDBOX_RUNTIMES` overrides with this switch. Helm owns
+`AGENTIO_SANDBOX_MODE` and rejects overrides; the runtime selection variable
+has been removed. Managed EPE's `AGENTIO_SANDBOX_MODE` and Ambient ztunnel's
+Sandbox settings are also chart-owned. External EPE must be configured separately.
+Restart existing injected Pods after changing the switch; Helm updates the
+injection template, not existing Pods.
+
+Token reading still requires `SANDBOX_TOKEN_ENABLED=true` and a mounted token
+directory supplied by the credential producer; see
+[CredentialProvider](../../docs/reference/credential-provider.md).
 
 Sidecar mode installs `agentiod` and its injection webhook, without the ambient CNI or node ztunnel:
 

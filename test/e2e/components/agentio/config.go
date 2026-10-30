@@ -54,6 +54,7 @@ type Config struct {
 	Reuse               bool   `yaml:"reuse" json:"reuse"`
 	EnableFirewallRules bool   `yaml:"enable-firewall-rules" json:"enableFirewallRules"`
 	EnableClientTrust   bool   `yaml:"enable-client-trust" json:"enableClientTrust"`
+	EnableSandbox       bool   `yaml:"enable-sandbox" json:"enableSandbox"`
 	FirewallBackend     string `yaml:"firewall-backend" json:"firewallBackend"`
 }
 

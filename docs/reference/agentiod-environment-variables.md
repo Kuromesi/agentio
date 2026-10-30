@@ -41,7 +41,18 @@ The `-print-env` output is the authoritative reference. Registered settings are 
 
 `AGENTIO_SANDBOX_MODE=false` (the default) disables Sandbox runtime discovery and Sandbox xDS output. Shared Workload policies remain enabled. Setting it to `true` enables Sandbox support alongside ordinary Workloads.
 
-`AGENTIO_SANDBOX_RUNTIMES` selects runtime integrations as a comma-separated list (currently `kruise`), defaulting to empty. To discover Kruise Sandboxes, set both `AGENTIO_SANDBOX_MODE=true` and `AGENTIO_SANDBOX_RUNTIMES=kruise`. An empty list enables no runtime integrations. Whitespace is trimmed, duplicates are ignored, and unknown or empty list entries fail startup in either mode.
+For Helm installations, use `sandbox.enabled` instead of environment overrides.
+It configures Agentiod's mode and Kruise runtime discovery, managed EPE's Sandbox
+rules, and the sidecar Sandbox Manager together. It defaults to `false` and is
+only supported with `profile: sidecar`. EPE also reads `AGENTIO_SANDBOX_MODE` to
+control its Sandbox rule watcher; configure it separately for external EPE.
+
+`AGENTIO_SANDBOX_MODE=true` directly enables the built-in Kruise Sandbox source.
+There is no runtime selection list. Remove `AGENTIO_SANDBOX_RUNTIMES` from existing
+deployments; Agentiod rejects the removed variable, including an empty value, with
+a migration error. Deployments that previously enabled Sandbox mode but left the
+runtime list empty should keep `AGENTIO_SANDBOX_MODE=false` if they do not want
+Kruise discovery.
 
 ## Environment variable reference
 
@@ -110,8 +121,7 @@ KRT debounce applies only to TrafficPolicy and SecurityProfile events, including
 | <code>AGENTIO_PUSH_CONCURRENCY</code> | Integer | <code>automatic (see description)</code> | Maximum number of client connections generating and sending pushed xDS responses concurrently. Defaults to min(15 + 5 &#42; GOMAXPROCS, 100). |
 | <code>AGENTIO_PUSH_DEBOUNCE</code> | Duration | <code>0s</code> | Optional quiet period before all compiled resource changes are published; zero disables push debounce. |
 | <code>AGENTIO_PUSH_DEBOUNCE_MAX</code> | Duration | <code>1s</code> | Maximum wait when push debounce is enabled; must be at least AGENTIO&#95;PUSH&#95;DEBOUNCE. |
-| <code>AGENTIO_SANDBOX_MODE</code> | Boolean | <code>false</code> | Enable Sandbox discovery and xDS resources. Inline SNI also projects to the bound Workload when it hosts one Sandbox for legacy compatibility; shared policies remain on Workloads. |
-| <code>AGENTIO_SANDBOX_RUNTIMES</code> | String | empty | Comma-separated Sandbox runtimes used when AGENTIO&#95;SANDBOX&#95;MODE is true. Supported: kruise. Empty enables no runtime integrations. |
+| <code>AGENTIO_SANDBOX_MODE</code> | Boolean | <code>false</code> | Enable Kruise Sandbox discovery and Sandbox xDS resources. Inline SNI also projects to the bound Workload when it hosts one Sandbox for legacy compatibility; shared policies remain on Workloads. |
 | <code>AGENTIO_SCOPED_SECRETS</code> | Boolean | <code>true</code> | Watch only the root namespace in the shared Secret informer. False watches all namespaces and requires cluster-wide Secret list/watch RBAC. |
 | <code>AGENTIO_SERVICE_NAME</code> | String | <code>agentiod</code> | Kubernetes service name placed in the xDS server certificate. |
 | <code>AGENTIO_TOKEN_AUDIENCE</code> | String | <code>agentio-ca</code> | Audience a client token must carry to be accepted. |

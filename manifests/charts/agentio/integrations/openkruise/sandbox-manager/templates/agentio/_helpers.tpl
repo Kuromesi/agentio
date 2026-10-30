@@ -36,6 +36,18 @@
 {{- end -}}
 
 {{- define "agentio.validate" -}}
+{{- if and (false) .Values.agentio.sandbox.enabled -}}
+{{- fail "sandbox.enabled is not supported with profile=ambient; use profile=sidecar" -}}
+{{- end -}}
+{{- range $name := list "AGENTIO_SANDBOX_MODE" "AGENTIO_SANDBOX_RUNTIMES" -}}
+{{- if hasKey $.Values.agentio.agentiod.env $name -}}
+{{- fail (printf "agentiod.env.%s is managed by sandbox.enabled; remove the env override" $name) -}}
+{{- end -}}
+{{- end -}}
+{{- if hasKey .Values.agentio.epe.env "AGENTIO_SANDBOX_MODE" -}}
+{{- fail "epe.env.AGENTIO_SANDBOX_MODE is managed by sandbox.enabled; remove the env override" -}}
+{{- end -}}
+
 {{- if .Values.agentio.epe.tls.enabled -}}
 {{- if eq .Values.agentio.epe.mode "managed" -}}
 {{- $certificateSource := .Values.agentio.epe.tls.certificateSource | default dict -}}

@@ -49,6 +49,7 @@ func chartValues(config Config) ([]byte, error) {
 
 	values := map[string]any{
 		"profile": config.Profile,
+		"sandbox": map[string]any{"enabled": config.EnableSandbox},
 		"global": map[string]any{
 			"imagePullPolicy": "IfNotPresent",
 			"clusterId":       "Kubernetes",

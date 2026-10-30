@@ -79,11 +79,11 @@
       "env": [
         {
           "name": "ENABLE_SANDBOX_MANAGER",
-          "value": "true"
+          "value": {{ .Values.agentio.sandbox.enabled | toString | quote }}
         },
         {
           "name": "AGENTIO_SANDBOX_MODE",
-          "value": "true"
+          "value": {{ .Values.agentio.sandbox.enabled | toString | quote }}
         },
         {
           "name": "ENABLE_FIREWALL_RULES",
@@ -243,11 +243,13 @@
         {
           "mountPath": "/tmp",
           "name": "traffic-proxy-tmp"
-        },
+        }
+        {{- if .Values.agentio.sandbox.enabled }},
         {
           "mountPath": "/var/lib/ztunnel/sandbox",
           "name": "agentio-sandbox-state"
         }
+        {{- end }}
       ]
     }
   ],
@@ -292,10 +294,12 @@
     {
       "emptyDir": {},
       "name": "traffic-proxy-tmp"
-    },
+    }
+    {{- if .Values.agentio.sandbox.enabled }},
     {
       "emptyDir": {},
       "name": "agentio-sandbox-state"
     }
+    {{- end }}
   ]
 }

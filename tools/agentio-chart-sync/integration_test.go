@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -122,6 +123,37 @@ func TestManagerMasterModesAndConfiguration(t *testing.T) {
 	}
 }
 
+func TestManagerSandboxMode(t *testing.T) {
+	target := managerChart(t, repositoryAgentioChart(t))
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			rendered := renderChart(t, target, map[string]any{"agentio": map[string]any{
+				"enabled": true,
+				"sandbox": map[string]any{"enabled": enabled},
+			}})
+			mode := fmt.Sprintf("name: AGENTIO_SANDBOX_MODE\n              value: %q", fmt.Sprint(enabled))
+			deployments := 0
+			for name, content := range rendered {
+				if strings.HasSuffix(name, "/agentiod/deployment.yaml") {
+					deployments++
+					if !strings.Contains(content, mode) || strings.Contains(content, "name: AGENTIO_SANDBOX_RUNTIMES") {
+						t.Fatalf("Agentiod Sandbox settings are inconsistent:\n%s", content)
+					}
+				}
+				if strings.HasSuffix(name, "/epe/deployment.yaml") {
+					deployments++
+					if !strings.Contains(content, mode) {
+						t.Fatalf("managed EPE Sandbox setting is inconsistent:\n%s", content)
+					}
+				}
+			}
+			if deployments != 2 {
+				t.Fatalf("rendered Agentiod/EPE deployments = %d, want 2", deployments)
+			}
+		})
+	}
+}
+
 func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "agentio")
 	copyTestTree(t, repositoryAgentioChart(t), source)
@@ -131,6 +163,7 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	global := values["global"].(map[string]any)
+	values["sandbox"].(map[string]any)["enabled"] = true
 	global["clusterId"], global["clusterDomain"], global["imagePullPolicy"] = "test-cluster", "example.internal", "Always"
 	agentiod := values["agentiod"].(map[string]any)
 	agentiod["fullnameOverride"], agentiod["tokenAudience"] = "custom-agentiod", "custom-ca"
@@ -161,11 +194,22 @@ func TestControllerUsesMasterBootstrapOverrides(t *testing.T) {
 		t.Fatal(err)
 	}
 	proxy := config.InitContainers[1]
+	if !slices.Contains(proxy.VolumeMounts, corev1.VolumeMount{
+		Name:      "agentio-sandbox-state",
+		MountPath: "/var/lib/ztunnel/sandbox",
+	}) || !slices.ContainsFunc(config.Volumes, func(v corev1.Volume) bool {
+		return v.Name == "agentio-sandbox-state" && v.EmptyDir != nil
+	}) {
+		t.Fatal("enabled traffic-proxy has no writable Sandbox state volume")
+	}
 	for name, want := range map[string]string{
-		"AGENTIO_SANDBOX_MODE":  "true",
-		"CA_ADDRESS":            "custom-agentiod.sandbox-system.svc.example.internal:15012",
-		"XDS_ADDRESS":           "custom-agentiod.sandbox-system.svc.example.internal:15012",
-		"ISTIO_META_CLUSTER_ID": "test-cluster", "ENABLE_FIREWALL_RULES": "false", "FIREWALL_BACKEND": "nftables",
+		"AGENTIO_SANDBOX_MODE":   "true",
+		"ENABLE_SANDBOX_MANAGER": "true",
+		"CA_ADDRESS":             "custom-agentiod.sandbox-system.svc.example.internal:15012",
+		"XDS_ADDRESS":            "custom-agentiod.sandbox-system.svc.example.internal:15012",
+		"ISTIO_META_CLUSTER_ID":  "test-cluster",
+		"ENABLE_FIREWALL_RULES":  "false",
+		"FIREWALL_BACKEND":       "nftables",
 	} {
 		if got := envValue(proxy.Env, name); got != want {
 			t.Errorf("%s = %s, want %s", name, got, want)

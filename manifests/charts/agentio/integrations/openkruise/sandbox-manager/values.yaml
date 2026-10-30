@@ -1,6 +1,10 @@
 # BEGIN GENERATED AGENTIO VALUES - DO NOT EDIT
 agentio:
   enabled: false
+  sandbox:
+    # Enable Kruise Sandbox discovery and the sidecar Sandbox Manager together.
+    # Requires the Kruise Sandbox CRD; not supported with profile=ambient.
+    enabled: false
   global:
     hub: docker.io/openkruise
     tag: latest
@@ -88,8 +92,7 @@ agentio:
       leaseName: agentiod-gateway-deployer-leader
     networkPolicy:
       enabled: false
-    # AGENTIO_SANDBOX_MODE also configures injected and ambient ztunnel discovery.
-    # Set it to "true" and AGENTIO_SANDBOX_RUNTIMES to "kruise" for runtime Sandboxes.
+    # Sandbox mode is managed by sandbox.enabled, not env overrides.
     env: {}
   egressGateway:
     mode: static

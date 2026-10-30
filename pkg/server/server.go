@@ -21,7 +21,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -42,7 +41,6 @@ import (
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policystatus"
-	"github.com/openkruise/agentio/pkg/registry"
 	kubernetesregistry "github.com/openkruise/agentio/pkg/registry/kubernetes"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/ca"
@@ -92,10 +90,6 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	}
 	if err := features.Validate(); err != nil {
 		return err
-	}
-	sandboxRuntimes, err := registry.ParseSandboxRuntimes(features.SandboxRuntimes)
-	if err != nil {
-		return fmt.Errorf("AGENTIO_SANDBOX_RUNTIMES: %w", err)
 	}
 	ztunnelAccount, err := trustedNodeServiceAccount(options.RootNamespace, features.ZTunnelAccount)
 	if err != nil {
@@ -167,7 +161,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	registry, err := kubernetesregistry.New(kubeClient, kubernetesregistry.Options{
-		EnableKruise:          features.SandboxMode && slices.Contains(sandboxRuntimes, registry.SandboxRuntimeKruise),
+		EnableKruise:          features.SandboxMode,
 		ClusterID:             options.ClusterID,
 		TrustDomain:           options.TrustDomain,
 		RootNamespace:         options.RootNamespace,

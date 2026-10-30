@@ -117,11 +117,16 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 		return sp
 	}, opts.WithName("CompiledGlobalSecurityProfiles")...)
 
+	collections := []krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs}
+	if features.SandboxMode {
+		collections = append(collections, newSandboxCollection(client, regs, opts, log))
+	}
+
 	// Debounce on the checked-mode join coalesces event bursts into one
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newSandboxCollection(client, regs, opts, log)},
+	return krt.JoinCollection(collections,
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KRTDebounceAfter, features.KRTDebounceMax))...)
 }

@@ -53,7 +53,7 @@ spec:
             - name: ENABLE_SANDBOX_MANAGER
               value: "false"
             - name: AGENTIO_SANDBOX_MODE
-              value: {{ index .Values.agentiod.env "AGENTIO_SANDBOX_MODE" | default false | quote }}
+              value: {{ .Values.sandbox.enabled | quote }}
             - name: INPOD_ENABLED
               value: "true"
             - name: RUST_LOG

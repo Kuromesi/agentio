@@ -70,7 +70,6 @@ func TestPrintEnvFlagDumpsTheEnvironment(t *testing.T) {
 			}
 			for _, expected := range []string{
 				"AGENTIO_PUSH_DEBOUNCE", "AGENTIO_KRT_DEBOUNCE",
-				"AGENTIO_SANDBOX_RUNTIMES",
 				"AGENTIO_SANDBOX_MODE",
 				"ENABLE_POLICY_STATUS",
 				"AGENTIO_CA_ROOT_LIFETIME", "AGENTIO_LOG_LEVEL", "AGENTIO_LOG_FORMAT",
