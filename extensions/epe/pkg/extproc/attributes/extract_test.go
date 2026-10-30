@@ -52,6 +52,33 @@ func makeHTTPHeaders(kv map[string]string) *extProcPb.HttpHeaders {
 
 func b64(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
 
+func TestExtractSandboxMetadataPrecedence(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		metadata string
+		want     *filter.SandboxToken
+	}{
+		{
+			name:     "current identity overrides legacy token",
+			metadata: "agent-identity.access-token=new+/=,agent-identity.sandbox-client-id=new-client",
+			want:     &filter.SandboxToken{AccessToken: "new+/=", SandboxClientID: "new-client"},
+		},
+		{name: "empty metadata does not fall back"},
+		{name: "malformed metadata does not fall back", metadata: "malformed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attrs := makeAttrs(t, map[string]any{
+				FilterStateSandboxMetadata: tc.metadata,
+				FilterStateSandboxToken:    `{"accessToken":"old","sandboxClientId":"old-client"}`,
+			})
+			peer, _ := Extract(t.Context(), nil, attrs)
+			if got := peer.Token.Parse(t.Context()); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("metadata identity = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestExtract(t *testing.T) {
 	fullHeaders := map[string]string{
 		":authority": "api.example.com:8443",

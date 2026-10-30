@@ -17,6 +17,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/url"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/types"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
@@ -44,7 +46,7 @@ type Peer struct {
 	// Labels is the source workload's label map, parsed from
 	// filter_state['agentio.workload.labels'] (or legacy sandbox.labels). Nil when pod identity is missing.
 	Labels map[string]string
-	// Token carries filter_state['sandbox.token']. Consumers must call Parse
+	// Token carries sandbox.metadata (or legacy sandbox.token). Consumers must call Parse
 	// before reading its fields. Copies of Peer share the same lazy result.
 	Token *SandboxToken
 }
@@ -64,8 +66,9 @@ type SandboxToken struct {
 	AccessToken     string `json:"accessToken"`
 	SandboxClientID string `json:"sandboxClientId"`
 
-	raw     string
-	invalid bool
+	raw      string
+	invalid  bool
+	metadata bool
 }
 
 // NewSandboxToken retains the wire value without decoding it.
@@ -76,7 +79,15 @@ func NewSandboxToken(raw string) *SandboxToken {
 	return &SandboxToken{raw: raw}
 }
 
-// Parse decodes base64 JSON (or raw JSON) once, including failed attempts.
+// NewSandboxMetadataToken retains the percent-encoded identity metadata without decoding it.
+func NewSandboxMetadataToken(raw string) *SandboxToken {
+	if raw == "" {
+		return nil
+	}
+	return &SandboxToken{raw: raw, metadata: true}
+}
+
+// Parse decodes Sandbox metadata or legacy base64/raw JSON once, including failed attempts.
 // It only parses the envelope; it does not validate the access token.
 // Pre-decoded tokens can also be supplied directly by callers.
 func (t *SandboxToken) Parse(ctx context.Context) *SandboxToken {
@@ -88,6 +99,37 @@ func (t *SandboxToken) Parse(ctx context.Context) *SandboxToken {
 	}
 	raw := t.raw
 	t.raw = ""
+	if t.metadata {
+		t.metadata = false
+		for entry := range strings.SplitSeq(raw, ",") {
+			key, value, ok := strings.Cut(entry, "=")
+			if !ok {
+				t.invalid = true
+				break
+			}
+			var field *string
+			switch key {
+			case "agent-identity.access-token":
+				field = &t.AccessToken
+			case "agent-identity.sandbox-client-id":
+				field = &t.SandboxClientID
+			default:
+				continue
+			}
+			decoded, err := url.PathUnescape(value) // '+' is literal in metadata, not a query-space escape.
+			if err != nil || decoded == "" || *field != "" {
+				t.invalid = true
+				break
+			}
+			*field = decoded
+		}
+		if t.invalid || t.AccessToken == "" || t.SandboxClientID == "" {
+			t.invalid = true
+			log.FromContext(ctx).V(logging.DEBUG).Info("invalid sandbox identity metadata")
+			return nil
+		}
+		return t
+	}
 	tokenJSON, decErr := base64.StdEncoding.DecodeString(raw)
 	if decErr != nil {
 		tokenJSON = []byte(raw)

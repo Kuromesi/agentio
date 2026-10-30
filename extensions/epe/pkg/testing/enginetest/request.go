@@ -18,6 +18,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -38,13 +39,14 @@ type RequestBuilder struct {
 	scheme  string
 	headers [][2]string
 
-	peerNamespace string
-	peerName      string
-	labels        map[string]string
-	sandboxToken  string
-	sourceAddress string
-	dstAddress    string
-	dstPort       int32
+	peerNamespace   string
+	peerName        string
+	labels          map[string]string
+	sandboxToken    string
+	sandboxMetadata string
+	sourceAddress   string
+	dstAddress      string
+	dstPort         int32
 
 	bodyChunks       [][]byte
 	streamingHeaders bool
@@ -97,6 +99,13 @@ func (b *RequestBuilder) SandboxToken(requestID, accessToken, clientID string) *
 		panic(fmt.Sprintf("marshal sandbox token: %v", err))
 	}
 	b.sandboxToken = base64.StdEncoding.EncodeToString(token)
+	return b
+}
+
+// SandboxMetadata sets the identity fields carried by current ztunnels.
+func (b *RequestBuilder) SandboxMetadata(accessToken, clientID string) *RequestBuilder {
+	b.sandboxMetadata = "agent-identity.access-token=" + url.PathEscape(accessToken) +
+		",agent-identity.sandbox-client-id=" + url.PathEscape(clientID)
 	return b
 }
 
@@ -222,6 +231,7 @@ func (b *RequestBuilder) Attrs() map[string]*structpb.Struct {
 		setString(attributes.FilterStateWorkloadLabels, encoded)
 	}
 	setString(attributes.FilterStateSandboxToken, b.sandboxToken)
+	setString(attributes.FilterStateSandboxMetadata, b.sandboxMetadata)
 	setString(attributes.AttrSourceAddress, b.sourceAddress)
 	setString(attributes.AttrDestinationAddress, b.dstAddress)
 	if b.dstPort > 0 {

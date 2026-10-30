@@ -151,7 +151,7 @@ spec:
 
 	request := func() *enginetest.RequestBuilder {
 		return injectionRequest().
-			SandboxToken("req-1", "sandbox-access-token", "sandbox-client-1").
+			SandboxMetadata("sandbox-access-token", "sandbox-client-1").
 			Header("authorization", "${AGENTIO_TOKEN}").
 			Header("x-api-key", "${AGENTIO_TOKEN}")
 	}

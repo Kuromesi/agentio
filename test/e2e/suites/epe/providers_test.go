@@ -353,6 +353,8 @@ spec:
   # Admission fills in the production proxy settings, retaining this mount.
   - name: agentio-proxy
     image: {{ .ProxyImage }}
+    env:
+    - {name: SANDBOX_TOKEN_ENABLED, value: "true"}
     volumeMounts:
     - {name: provider-token, mountPath: /var/opt/sandbox/agent-token, readOnly: true}
   volumes:

@@ -1054,8 +1054,9 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 		states = config.GetOnRequestHeaders()
 	}
 	for key, header := range map[string]string{
-		"sandbox.id":    "X-AGENTIO-SANDBOX-ID",
-		"sandbox.token": "X-AGENTIO-SANDBOX-TOKEN",
+		"sandbox.id":       "X-AGENTIO-SANDBOX-ID",
+		"sandbox.token":    "X-AGENTIO-SANDBOX-TOKEN",
+		"sandbox.metadata": "X-AGENTIO-SANDBOX-METADATA",
 	} {
 		index := slices.IndexFunc(
 			states,
@@ -1076,6 +1077,9 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 		}
 		if state.GetFactoryKey() != "envoy.hashable_string" {
 			t.Errorf("%s must distinguish upstream pools", key)
+		}
+		if key == "sandbox.metadata" && !state.GetSkipIfEmpty() {
+			t.Error("absent metadata must not mask a legacy sandbox token")
 		}
 	}
 }

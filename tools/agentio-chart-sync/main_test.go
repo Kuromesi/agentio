@@ -645,7 +645,8 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 	}
 	proxy := config.InitContainers[1]
 	if !slices.Contains(proxy.VolumeMounts, corev1.VolumeMount{
-		Name: "agentio-sandbox-state", MountPath: "/var/lib/ztunnel/sandbox",
+		Name:      "agentio-sandbox-state",
+		MountPath: "/var/lib/ztunnel/sandbox",
 	}) {
 		t.Fatal("traffic-proxy has no writable Sandbox state mount")
 	}

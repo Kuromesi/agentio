@@ -157,6 +157,42 @@ func TestSandboxTokenSharedAcrossStreamViews(t *testing.T) {
 	}
 }
 
+func TestParseSandboxMetadataToken(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want *SandboxToken
+	}{
+		{
+			name: "ztunnel encoding",
+			raw:  "agent-identity.access-token=a%2Cb%3Bc%25%20d=+/%22%5C%0D%0A%E4%B8%AD,agent-identity.sandbox-client-id=client+/=,runtime.name=test%2Cruntime",
+			want: &SandboxToken{AccessToken: "a,b;c% d=+/\"\\\r\n中", SandboxClientID: "client+/="},
+		},
+		{name: "empty"},
+		{name: "missing identity", raw: "runtime.name=test"},
+		{name: "missing client", raw: "agent-identity.access-token=token"},
+		{name: "missing token", raw: "agent-identity.sandbox-client-id=client"},
+		{name: "empty token", raw: "agent-identity.access-token=,agent-identity.sandbox-client-id=client"},
+		{name: "malformed entry", raw: "token,agent-identity.sandbox-client-id=client"},
+		{name: "invalid escape", raw: "agent-identity.access-token=token%ZZ,agent-identity.sandbox-client-id=client"},
+		{name: "duplicate identity", raw: "agent-identity.access-token=a,agent-identity.access-token=b,agent-identity.sandbox-client-id=client"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			token := NewSandboxMetadataToken(tc.raw)
+			got := token.Parse(t.Context())
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("Parse() = %+v, want %+v", got, tc.want)
+			}
+			if again := token.Parse(t.Context()); again != got {
+				t.Fatal("second access did not reuse parse result")
+			}
+			if token != nil && token.raw != "" {
+				t.Fatal("raw metadata retained after parse")
+			}
+		})
+	}
+}
+
 func TestSandboxTokenPredecoded(t *testing.T) {
 	token := &SandboxToken{AccessToken: "opaque", SandboxClientID: "c1"}
 	if token.Parse(t.Context()) != token {
