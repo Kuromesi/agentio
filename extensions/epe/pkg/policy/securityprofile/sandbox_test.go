@@ -89,8 +89,16 @@ func TestNewInlineProfileRejections(t *testing.T) {
 	}{
 		{"invalid json", `{`, "decode"},
 		{"empty array", `[]`, "contains no rules"},
-		{"unknown field", `[{"name":"r","priority":3,"match":[{"domains":["a.example.com"]}],"actions":{"block":{}}}]`, "decode"},
-		{"bad regex", `[{"name":"r","match":[{"domains":["a.example.com"],"paths":[{"type":"Regex","value":"["}]}],"actions":{"block":{}}}]`, "regex"},
+		{
+			"unknown field",
+			`[{"name":"r","priority":3,"match":[{"domains":["a.example.com"]}],"actions":{"block":{}}}]`,
+			"decode",
+		},
+		{
+			"bad regex",
+			`[{"name":"r","match":[{"domains":["a.example.com"],"paths":[{"type":"Regex","value":"["}]}],"actions":{"block":{}}}]`,
+			"regex",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -195,7 +203,11 @@ func TestInlineHeaderManipulationBindsThroughRealFilter(t *testing.T) {
 		t.Fatalf("Project: %v", err)
 	}
 	b := newBinder(regs)
-	units, err := b.bind([]*Profile{inline}, testRequest("example.com"), inputs.Workload{Name: "sbx-1", Namespace: "ns"})
+	units, err := b.bind(
+		[]*Profile{inline},
+		testRequest("example.com"),
+		inputs.Workload{Name: "sbx-1", Namespace: "ns"},
+	)
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -259,7 +271,11 @@ func TestResolverInlineProfilesEvaluateAfterSelectorProfiles(t *testing.T) {
 
 	store := inlineStore{selector: []*Profile{selectorProfile}, inline: []*Profile{inlineProfile}}
 	resolve := NewResolver(store, regs, nil)
-	res, err := resolve(context.Background(), subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}}, testRequest("example.com"))
+	res, err := resolve(
+		context.Background(),
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+		testRequest("example.com"),
+	)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
@@ -280,7 +296,11 @@ func TestResolverWithoutInlineProfilesIsUnchanged(t *testing.T) {
 	regs := claimAll(t, nil)
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
-	res, err := resolve(context.Background(), subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}}, testRequest("example.com"))
+	res, err := resolve(
+		context.Background(),
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+		testRequest("example.com"),
+	)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}

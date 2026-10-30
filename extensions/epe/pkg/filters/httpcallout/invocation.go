@@ -109,8 +109,10 @@ func correlationView(st *filter.Stream) HTTPRequest {
 func sourceContext(st *filter.Stream) SourceContext {
 	workload := st.Caller.Subject.Workload
 	return SourceContext{
-		Namespace: workload.Namespace, Workload: workload.Name,
-		IP: workload.IP, Labels: workload.Labels,
+		Namespace: workload.Namespace,
+		Workload:  workload.Name,
+		IP:        workload.IP,
+		Labels:    workload.Labels,
 	}
 }
 

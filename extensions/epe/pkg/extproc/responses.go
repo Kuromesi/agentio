@@ -39,10 +39,12 @@ var defaultPassThrough = []*extProcPb.ProcessingResponse{
 // Fixed local replies are read-only and shared, like defaultPassThrough.
 var (
 	connectRequestBodyUnsupportedReply = filter.Reply{
-		Status: connectBodyUnsupportedStatus, Details: connectRequestBodyUnsupportedDetails,
+		Status:  connectBodyUnsupportedStatus,
+		Details: connectRequestBodyUnsupportedDetails,
 	}
 	connectResponseBodyUnsupportedReply = filter.Reply{
-		Status: connectBodyUnsupportedStatus, Details: connectResponseBodyUnsupportedDetails,
+		Status:  connectBodyUnsupportedStatus,
+		Details: connectResponseBodyUnsupportedDetails,
 	}
 	missingIdentityDeny = []*extProcPb.ProcessingResponse{
 		immediateFromReply(filter.Reply{Status: missingIdentityStatus, Details: missingIdentityDetails}),
@@ -90,5 +92,7 @@ var emptyResponseHeadersAck = []*extProcPb.ProcessingResponse{{
 // Fixed local replies are read-only; callers clone before adding stream state.
 var (
 	invalidRouteMutationDeny      = immediateFromReply(filter.Reply{Status: 500, Details: "epe_invalid_route_mutation"})
-	conflictingUpstreamTargetDeny = immediateFromReply(filter.Reply{Status: 500, Details: "epe_conflicting_upstream_target"})
+	conflictingUpstreamTargetDeny = immediateFromReply(
+		filter.Reply{Status: 500, Details: "epe_conflicting_upstream_target"},
+	)
 )

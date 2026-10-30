@@ -243,10 +243,12 @@ func (f *Filter) fetchFromSource(
 // identically — a claimed unit already had its chance either way.
 func (f *Filter) resolveFailure(ctx context.Context, cfg Config, st *filter.Stream, err error) filter.Action {
 	if cfg.FailBlock {
-		log.FromContext(ctx).Error(err, "token transformation failed, blocking request", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
+		log.FromContext(ctx).
+			Error(err, "token transformation failed, blocking request", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return blockReply(err)
 	}
-	log.FromContext(ctx).Error(err, "token transformation failed, passing through", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
+	log.FromContext(ctx).
+		Error(err, "token transformation failed, passing through", "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 	return filter.Continue()
 }
 

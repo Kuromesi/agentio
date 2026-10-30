@@ -52,7 +52,9 @@ func BenchmarkEgressAuthorization(b *testing.B) {
 						NewAuthorizer(aggregate),
 					).Authorize
 					st := &filter.Stream{
-						Caller:  filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod-0"}}},
+						Caller: filter.CallerContext{
+							Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod-0"}},
+						},
 						Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443},
 					}
 					switch mode {

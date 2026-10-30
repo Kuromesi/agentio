@@ -59,7 +59,13 @@ func translateRequestHeadersResult(
 	clearCache := reqHeadersRes.Route != nil && reqHeadersRes.Route.ClearCache
 	if len(reqHeadersRes.HeaderOps) == 0 && reqHeadersRes.Body == nil && !clearCache {
 		if reqHeadersRes.Disposition == engine.DispositionPassthrough {
-			loggerD.Info("no filter produced mutations; passthrough", "workload", caller.Subject.Workload.String(), "sandbox", caller.Subject.Sandbox.String())
+			loggerD.Info(
+				"no filter produced mutations; passthrough",
+				"workload",
+				caller.Subject.Workload.String(),
+				"sandbox",
+				caller.Subject.Sandbox.String(),
+			)
 		}
 		return []*extProcPb.ProcessingResponse{applyRouteMutation(defaultPassThrough[0], reqHeadersRes.Route)}
 	}

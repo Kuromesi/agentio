@@ -227,11 +227,16 @@ func TestAuthorizerAcceptsWorkloadUIDOnly(t *testing.T) {
 	for _, workload := range []subject.Workload{{UID: "uid"}, {}} {
 		stream := &filter.Stream{
 			Caller: filter.CallerContext{Subject: subject.Subject{
-				Workload: workload, Sandbox: &subject.Sandbox{UID: "kruise:sbx"},
+				Workload: workload,
+				Sandbox:  &subject.Sandbox{UID: "kruise:sbx"},
 			}},
 			Info: filter.NewStreamInfo(),
 		}
-		got, err := authorizer.Authorize(t.Context(), stream, []netip.AddrPort{netip.MustParseAddrPort("203.0.113.7:443")})
+		got, err := authorizer.Authorize(
+			t.Context(),
+			stream,
+			[]netip.AddrPort{netip.MustParseAddrPort("203.0.113.7:443")},
+		)
 		if err != nil || (workload.UID != "" && len(got) != 1) || (workload.UID == "" && len(got) != 0) {
 			t.Fatalf("workload=%v candidates=%v err=%v", workload, got, err)
 		}
@@ -327,7 +332,8 @@ func TestResourcesForUsesExplicitWorkloadUID(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.put(store.Workload, "other-uid", &workload.Workload{
-		Name: "pod", Namespace: "ns",
+		Name:       "pod",
+		Namespace:  "ns",
 		Extensions: []*workload.Extension{{Name: "traffic-policy-reference", Config: emptyBinding}},
 	})
 	source := testAggregate(f)
@@ -335,15 +341,24 @@ func TestResourcesForUsesExplicitWorkloadUID(t *testing.T) {
 		uid  string
 		want int
 	}{{"uid", 1}, {"other-uid", 0}} {
-		policies, err := source.ResourcesFor(store.TrafficPolicy, subject.Subject{Workload: subject.Workload{UID: tc.uid}})
+		policies, err := source.ResourcesFor(
+			store.TrafficPolicy,
+			subject.Subject{Workload: subject.Workload{UID: tc.uid}},
+		)
 		if err != nil || len(policies) != tc.want {
 			t.Fatalf("UID %q policies = %v, %v", tc.uid, policies, err)
 		}
 	}
-	if _, err := source.ResourcesFor(store.TrafficPolicy, subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}); err == nil {
+	if _, err := source.ResourcesFor(
+		store.TrafficPolicy,
+		subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+	); err == nil {
 		t.Fatal("ambiguous namespace/name accepted without a UID")
 	}
-	_, err = source.ResourcesFor(store.TrafficPolicy, subject.Subject{Workload: subject.Workload{UID: "missing-uid", Namespace: "ns", Name: "pod"}})
+	_, err = source.ResourcesFor(
+		store.TrafficPolicy,
+		subject.Subject{Workload: subject.Workload{UID: "missing-uid", Namespace: "ns", Name: "pod"}},
+	)
 	var missing *store.MissingResource
 	if !errors.As(err, &missing) || missing.Key != (store.Key{Type: store.Workload, Name: "missing-uid"}) {
 		t.Fatalf("missing explicit UID = %v, want exact resource request without name fallback", err)
@@ -374,12 +389,18 @@ func TestWorkloadConfigDoesNotDependOnSourceIP(t *testing.T) {
 		f.put(store.Workload, "uid", w)
 		source := testAggregate(f)
 		resolver := &resolver{source: source}
-		expected, err := resolver.config(t.Context(), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}})
+		expected, err := resolver.config(
+			t.Context(),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, ip := range []string{"", "192.0.2.1", "2001:db8::1", "198.51.100.9", "not-an-ip"} {
-			got, err := resolver.config(t.Context(), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod", IP: ip}})
+			got, err := resolver.config(
+				t.Context(),
+				subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod", IP: ip}},
+			)
 			if err != nil {
 				t.Fatalf("source IP %q affected lookup: %v", ip, err)
 			}
@@ -405,7 +426,11 @@ func TestLookupFetchesAllMissingPolicies(t *testing.T) {
 			f.put(key.Type, key.Name, &sec.TrafficPolicy{})
 		}
 		started := time.Now()
-		result, err := lookup(t.Context(), testAggregate(f), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}})
+		result, err := lookup(
+			t.Context(),
+			testAggregate(f),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -500,7 +525,9 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 	source := testStore()
 	source.err = errors.New("xDS unavailable")
 	stream := &filter.Stream{
-		Caller:  filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}},
+		Caller: filter.CallerContext{
+			Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		},
 		Request: httpreq.HTTPRequest{Host: "192.0.2.1", Port: 443},
 		Info:    filter.NewStreamInfo(),
 	}
@@ -534,7 +561,9 @@ func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
 		{"192.0.2.1", false}, // Global miss preserves workload default-deny.
 	} {
 		stream := &filter.Stream{
-			Caller:  filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}},
+			Caller: filter.CallerContext{
+				Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+			},
 			Request: httpreq.HTTPRequest{Host: tc.host, Port: 443},
 		}
 		target, reply, err := authorize(t.Context(), stream)
@@ -562,8 +591,12 @@ func TestAuthorizerRejectsMissingIdentityBeforeLookup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream := &filter.Stream{
-				Caller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: tc.pod.Namespace, Name: tc.pod.Name}}},
-				Info:   filter.NewStreamInfo(),
+				Caller: filter.CallerContext{
+					Subject: subject.Subject{
+						Workload: subject.Workload{Namespace: tc.pod.Namespace, Name: tc.pod.Name},
+					},
+				},
+				Info: filter.NewStreamInfo(),
 			}
 			// No resource store is needed: rejection must precede any lookup.
 			allowed, err := NewAuthorizer(nil).Authorize(t.Context(), stream, []netip.AddrPort{

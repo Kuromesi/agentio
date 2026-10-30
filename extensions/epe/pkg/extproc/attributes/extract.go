@@ -94,7 +94,9 @@ func Extract(
 	}
 	workload := subject.Workload{
 		UID:       extractFilterStateString(attrs, FilterStateWorkloadUID),
-		Namespace: workloadNamespace, Name: workloadName, IP: extractWorkloadIP(attrs),
+		Namespace: workloadNamespace,
+		Name:      workloadName,
+		IP:        extractWorkloadIP(attrs),
 	}
 	caller := filter.CallerContext{}
 	if uid := extractFilterStateString(attrs, FilterStateSandboxID); uid != "" {

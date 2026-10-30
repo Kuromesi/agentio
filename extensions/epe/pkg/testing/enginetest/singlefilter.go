@@ -83,7 +83,13 @@ func NewSingleFilter(t testing.TB, cfg SingleFilter) *Harness {
 	}
 
 	resolve := func(_ context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		scope := inputs.NewScope(inputs.RequestFrom(*req), inputs.WorkloadFromSubject(subject), profile, rule, cfg.Inputs, scopeOpts...)
+		scope := inputs.NewScope(
+			inputs.RequestFrom(*req),
+			inputs.WorkloadFromSubject(subject),
+			profile,
+			rule,
+			cfg.Inputs,
+			scopeOpts...)
 		return engine.Resolution{Units: []engine.Unit{{
 			ID:    filter.UnitID{Scope: profile.Namespace + "/" + profile.Name, Name: rule.Name},
 			Scope: scope,

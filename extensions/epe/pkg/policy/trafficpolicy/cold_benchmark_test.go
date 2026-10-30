@@ -63,7 +63,11 @@ func BenchmarkColdDependencySequence(b *testing.B) {
 					}
 				}
 				a := testAggregate(f)
-				if _, err := lookup(context.Background(), a, subject.Subject{Workload: subject.Workload{Name: "pod", Namespace: "ns"}}); err != nil {
+				if _, err := lookup(
+					context.Background(),
+					a,
+					subject.Subject{Workload: subject.Workload{Name: "pod", Namespace: "ns"}},
+				); err != nil {
 					b.Fatal(err)
 				}
 				if calls != n+1 {

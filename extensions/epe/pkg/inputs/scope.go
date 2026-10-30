@@ -56,7 +56,10 @@ type Scope struct {
 // receivers, so they promote through audit.Scope's embedded value on both
 // pointer and value roots.
 func (s Scope) Request() Request { return s.request }
-func (s Scope) Pod() Workload    { return s.workload }
+
+// Pod preserves the workload accessor used by existing templates.
+func (s Scope) Pod() Workload { return s.workload }
+
 func (s Scope) Profile() Profile { return s.profile }
 func (s Scope) Rule() Rule       { return s.rule }
 
@@ -101,7 +104,14 @@ func WithInputsError(msg string) ScopeOption {
 // NewScope is the only way to obtain a usable Scope. There is deliberately no
 // fallback for a Scope built as a literal: a memoisation that can be silently
 // absent is a second construction path whose failure mode is invisible.
-func NewScope(req Request, workload Workload, profile Profile, rule Rule, in map[string]any, opts ...ScopeOption) *Scope {
+func NewScope(
+	req Request,
+	workload Workload,
+	profile Profile,
+	rule Rule,
+	in map[string]any,
+	opts ...ScopeOption,
+) *Scope {
 	s := &Scope{
 		request:  req,
 		workload: workload,

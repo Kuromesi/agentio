@@ -67,7 +67,9 @@ func BenchmarkMatches(b *testing.B) {
 				b.ReportAllocs()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
+					benchSink = store.ProfilesFor(
+						subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}},
+					)
 				}
 			})
 		}
@@ -93,7 +95,9 @@ func BenchmarkMatches_Fallback(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
+				benchSink = store.ProfilesFor(
+					subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}},
+				)
 			}
 		})
 	}
@@ -127,7 +131,9 @@ func BenchmarkMatches_GlobalAndNamespaced(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				benchSink = store.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}})
+				benchSink = store.ProfilesFor(
+					subject.Subject{Workload: subject.Workload{Namespace: "default", Labels: benchPodLabels}},
+				)
 			}
 		})
 	}

@@ -39,11 +39,19 @@ func TestHarnessRunsInjectedResolver(t *testing.T) {
 		t.Fatalf("project block payload: %v", errs[0])
 	}
 	resolve := func(_ context.Context, subject subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
-		return engine.Resolution{Units: []engine.Unit{{
-			ID:    filter.UnitID{Scope: "test/profile", Name: "block"},
-			Scope: inputs.NewScope(inputs.RequestFrom(*req), inputs.WorkloadFromSubject(subject), inputs.Profile{}, inputs.Rule{}, nil),
-			Cfgs:  cfgs,
-		}}}, nil
+		return engine.Resolution{Units: []engine.Unit{
+			{
+				ID: filter.UnitID{Scope: "test/profile", Name: "block"},
+				Scope: inputs.NewScope(
+					inputs.RequestFrom(*req),
+					inputs.WorkloadFromSubject(subject),
+					inputs.Profile{},
+					inputs.Rule{},
+					nil,
+				),
+				Cfgs: cfgs,
+			},
+		}}, nil
 	}
 
 	h := New(t, Options{Resolve: resolve, Registrations: regs})
@@ -80,10 +88,15 @@ func TestHarnessPreservesDiscoveryIdentities(t *testing.T) {
 		Sandbox:  &subject.Sandbox{UID: "kruise:sandbox"},
 	}
 	var got subject.Subject
-	h := New(t, Options{Resolve: func(_ context.Context, subject subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
-		got = subject
-		return engine.Resolution{}, nil
-	}})
+	h := New(
+		t,
+		Options{
+			Resolve: func(_ context.Context, subject subject.Subject, _ *httpreq.HTTPRequest) (engine.Resolution, error) {
+				got = subject
+				return engine.Resolution{}, nil
+			},
+		},
+	)
 	h.Run(t, NewRequest("GET", "server.example.com", "/").Subject(want))
 	if got.Workload.UID != want.Workload.UID ||
 		got.Sandbox == nil || got.Sandbox.UID != want.Sandbox.UID {

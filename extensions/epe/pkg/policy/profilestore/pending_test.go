@@ -46,9 +46,18 @@ func TestPendingProfilesFilterNotificationsAndCancelIndependently(t *testing.T) 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		canceled, aDone, bDone := make(chan error, 1), make(chan error, 1), make(chan error, 1)
-		go func() { _, err := s.ResolveProfiles(ctx, a); canceled <- err }()
-		go func() { _, err := s.ResolveProfiles(t.Context(), a); aDone <- err }()
-		go func() { _, err := s.ResolveProfiles(t.Context(), b); bDone <- err }()
+		go func() {
+			_, err := s.ResolveProfiles(ctx, a)
+			canceled <- err
+		}()
+		go func() {
+			_, err := s.ResolveProfiles(t.Context(), a)
+			aDone <- err
+		}()
+		go func() {
+			_, err := s.ResolveProfiles(t.Context(), b)
+			bDone <- err
+		}()
 		synctest.Wait()
 		aBefore, bBefore := aCalls.Load(), bCalls.Load()
 		if aBefore != 2 || bBefore != 1 {
@@ -101,7 +110,10 @@ func TestPendingProfilePublicationBeforeRegistration(t *testing.T) {
 			}
 			return testSandboxSource(subj, "uid"), true, nil
 		}
-		got, err := s.ResolveProfiles(t.Context(), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "a"}})
+		got, err := s.ResolveProfiles(
+			t.Context(),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "a"}},
+		)
 		if err != nil || len(got) != 1 {
 			t.Fatalf("resolve: %v, %v", got, err)
 		}
@@ -124,7 +136,10 @@ func TestPendingProfileSourceRemovalBeforeRegistration(t *testing.T) {
 			}
 			return sandboxSource{}, false, nil
 		}
-		got, err := s.ResolveProfiles(t.Context(), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "a"}})
+		got, err := s.ResolveProfiles(
+			t.Context(),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "a"}},
+		)
 		if err != nil || len(got) != 0 || calls != 2 {
 			t.Fatalf("resolve: %v, %v, calls=%d", got, err, calls)
 		}

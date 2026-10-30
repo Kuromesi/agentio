@@ -43,6 +43,7 @@ func (s Subject) HasIdentity() bool {
 	return s.Workload.HasIdentity() || (s.Sandbox != nil && s.Sandbox.UID != "")
 }
 
+// HasIdentity accepts either a discovery UID or a complete namespace/name pair.
 func (w Workload) HasIdentity() bool {
 	return w.UID != "" || (w.Namespace != "" && w.Name != "")
 }

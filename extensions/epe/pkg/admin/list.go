@@ -96,12 +96,20 @@ func (h *handler) handleList(w http.ResponseWriter, r *http.Request) {
 // writes the response. Called by both GET (after CSV label parsing) and POST
 // (with pre-parsed map). A non-empty workloadName also resolves the same-name
 // Sandbox profile, which is looked up by exact identity.
-func (h *handler) handleMatch(w http.ResponseWriter, r *http.Request, workloadName, namespace string, labels map[string]string, full bool) {
+func (h *handler) handleMatch(
+	w http.ResponseWriter,
+	r *http.Request,
+	workloadName, namespace string,
+	labels map[string]string,
+	full bool,
+) {
 	if namespace == "" {
 		writeError(w, http.StatusBadRequest, "namespace is required when workload_labels or workload_name is provided")
 		return
 	}
-	matched := h.store.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: workloadName, Namespace: namespace, Labels: labels}})
+	matched := h.store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: workloadName, Namespace: namespace, Labels: labels}},
+	)
 	views := make([]ProfileView, 0, len(matched))
 	for _, p := range matched {
 		v := toView(p)

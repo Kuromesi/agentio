@@ -18,9 +18,11 @@ import "github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 // Fixed replies, including their bodies, are read-only across requests.
 var (
 	connectUnsupportedReply = filter.Reply{
-		Status: 403, Body: []byte("tokentransform: unsupported for CONNECT"),
+		Status: 403,
+		Body:   []byte("tokentransform: unsupported for CONNECT"),
 	}
 	credentialUnavailableReply = filter.Reply{
-		Status: 403, Body: []byte("tokentransform: credential unavailable"),
+		Status: 403,
+		Body:   []byte("tokentransform: credential unavailable"),
 	}
 )

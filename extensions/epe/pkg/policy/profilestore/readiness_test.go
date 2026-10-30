@@ -29,13 +29,14 @@ import (
 	metadatafake "k8s.io/client-go/metadata/fake"
 	ktesting "k8s.io/client-go/testing"
 
+	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"github.com/openkruise/agentio/pkg/model"
-	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 type sandboxProfileTestClient struct{ kube.Client }
@@ -58,8 +59,12 @@ func TestResolveProfilesSandboxWithDistinctWorkloadName(t *testing.T) {
 			metadata := c.Metadata().(*metadatafake.FakeMetadataClient)
 			resource := metadata.Resource(sandboxGVR).Namespace("ns").(metadatafake.MetadataClient)
 			sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-				Name: "sandbox", Namespace: "ns", UID: "source-uid",
-				Annotations: map[string]string{securityprofile.AnnotationSecurityRules: `[{"name":"deny","match":[{"domains":["*"]}],"actions":{"block":{}}}]`},
+				Name:      "sandbox",
+				Namespace: "ns",
+				UID:       "source-uid",
+				Annotations: map[string]string{
+					securityprofile.AnnotationSecurityRules: `[{"name":"deny","match":[{"domains":["*"]}],"actions":{"block":{}}}]`,
+				},
 			}}
 			uid := "kruise:ns--sandbox"
 			if labeled {
@@ -86,8 +91,12 @@ func TestResolveProfilesSandboxWithDistinctWorkloadName(t *testing.T) {
 				return true, nil, errors.New("ready lookup must use the informer")
 			})
 			subj := subject.Subject{
-				Workload: subject.Workload{Name: "runtime", Namespace: "ns", Labels: map[string]string{"app": "runtime"}},
-				Sandbox:  &subject.Sandbox{UID: uid},
+				Workload: subject.Workload{
+					Name:      "runtime",
+					Namespace: "ns",
+					Labels:    map[string]string{"app": "runtime"},
+				},
+				Sandbox: &subject.Sandbox{UID: uid},
 			}
 			got, err := s.ResolveProfiles(t.Context(), subj)
 			if err != nil || len(got) != 2 || got[0].Meta.Name != "admin" || got[1].Meta.Name != "sandbox" {
@@ -119,7 +128,9 @@ func TestSandboxUIDLookupBeforeWatch(t *testing.T) {
 			metadata := c.Metadata().(*metadatafake.FakeMetadataClient)
 			resource := metadata.Resource(sandboxGVR).Namespace(tc.namespace).(metadatafake.MetadataClient)
 			sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-				Name: "sandbox", Namespace: tc.namespace, UID: "source-uid",
+				Name:        "sandbox",
+				Namespace:   tc.namespace,
+				UID:         "source-uid",
 				Labels:      map[string]string{agentsv1alpha1.LabelSandboxID: "delivery"},
 				Annotations: map[string]string{securityprofile.AnnotationSecurityRules: tc.rules},
 			}}
@@ -134,7 +145,10 @@ func TestSandboxUIDLookupBeforeWatch(t *testing.T) {
 				}
 			}
 			profiles := NewCollection(c, nil, nil, t.Context().Done())
-			subj := subject.Subject{Workload: subject.Workload{Name: "runtime", Namespace: "ns"}, Sandbox: &subject.Sandbox{UID: "kruise:delivery"}}
+			subj := subject.Subject{
+				Workload: subject.Workload{Name: "runtime", Namespace: "ns"},
+				Sandbox:  &subject.Sandbox{UID: "kruise:delivery"},
+			}
 			source, found, err := profiles.sandbox(t.Context(), subj)
 			if tc.wantError {
 				if err == nil {
@@ -142,11 +156,17 @@ func TestSandboxUIDLookupBeforeWatch(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || source.name != (types.NamespacedName{Namespace: "ns", Name: "sandbox"}) || source.identity.UID != "source-uid" || found != (tc.rules != "") {
+			if err != nil || source.name != (types.NamespacedName{Namespace: "ns", Name: "sandbox"}) ||
+				source.identity.UID != "source-uid" ||
+				found != (tc.rules != "") {
 				t.Fatalf("UID lookup = %+v, %v, %v", source, found, err)
 			}
 			boom := errors.New("API unavailable")
-			metadata.PrependReactor("list", "sandboxes", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, boom })
+			metadata.PrependReactor(
+				"list",
+				"sandboxes",
+				func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, boom },
+			)
 			if _, _, err := profiles.sandbox(t.Context(), subj); !errors.Is(err, boom) {
 				t.Fatalf("API failure = %v, want fail closed", err)
 			}
@@ -172,10 +192,14 @@ func TestSandboxFirstRequestWaitsForSource(t *testing.T) {
 				}
 			}()
 			// Hold the compiled profile before the store receives it.
-			profiles.Collection = krt.NewCollection(profiles.Collection, func(_ krt.HandlerContext, p securityprofile.Profile) *securityprofile.Profile {
-				<-publish
-				return &p
-			}, krt.WithStop(ctx.Done()))
+			profiles.Collection = krt.NewCollection(
+				profiles.Collection,
+				func(_ krt.HandlerContext, p securityprofile.Profile) *securityprofile.Profile {
+					<-publish
+					return &p
+				},
+				krt.WithStop(ctx.Done()),
+			)
 			lookedUp := make(chan struct{}, 1)
 			lookup := profiles.sandbox
 			profiles.sandbox = func(ctx context.Context, subj subject.Subject) (sandboxSource, bool, error) {
@@ -195,8 +219,13 @@ func TestSandboxFirstRequestWaitsForSource(t *testing.T) {
 				t.Fatal("initial sync failed")
 			}
 			sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-				Name: "new-sandbox", Namespace: "ns", UID: "new-uid", ResourceVersion: "1",
-				Annotations: map[string]string{securityprofile.AnnotationSecurityRules: `[{"name":"deny","match":[{"domains":["*"]}],"actions":{"block":{}}}]`},
+				Name:            "new-sandbox",
+				Namespace:       "ns",
+				UID:             "new-uid",
+				ResourceVersion: "1",
+				Annotations: map[string]string{
+					securityprofile.AnnotationSecurityRules: `[{"name":"deny","match":[{"domains":["*"]}],"actions":{"block":{}}}]`,
+				},
 			}}
 			resource := c.Metadata().Resource(sandboxGVR).Namespace("ns").(metadatafake.MetadataClient)
 			if _, err := resource.CreateFake(sandbox, metav1.CreateOptions{}); err != nil {
@@ -271,13 +300,20 @@ func TestResolveProfilesWaitsOnlyForSandbox(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		s := MakeFakeStore()
 		sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-			Name: "sbx-1", Namespace: "ns", UID: "uid-1", ResourceVersion: "2",
-			Annotations: map[string]string{securityprofile.AnnotationSecurityRules: `[{"name":"r","match":[{"domains":["*"]}],"actions":{"block":{}}}]`},
+			Name:            "sbx-1",
+			Namespace:       "ns",
+			UID:             "uid-1",
+			ResourceVersion: "2",
+			Annotations: map[string]string{
+				securityprofile.AnnotationSecurityRules: `[{"name":"r","match":[{"domains":["*"]}],"actions":{"block":{}}}]`,
+			},
 		}}
 		s.sandbox = func(_ context.Context, subj subject.Subject) (sandboxSource, bool, error) {
 			return testSandboxSource(subj, string(sandbox.UID)), subj.Workload.Name == sandbox.Name, nil
 		}
-		subj := subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns", Labels: map[string]string{"app": "test"}}}
+		subj := subject.Subject{
+			Workload: subject.Workload{Name: "sbx-1", Namespace: "ns", Labels: map[string]string{"app": "test"}},
+		}
 		results := make(chan []*securityprofile.Profile, 8)
 		for range cap(results) {
 			go func() {
@@ -299,7 +335,12 @@ func TestResolveProfilesWaitsOnlyForSandbox(t *testing.T) {
 		if len(results) != 0 {
 			t.Fatal("administrator policy released Sandbox requests")
 		}
-		ordinary, err := s.ResolveProfiles(t.Context(), subject.Subject{Workload: subject.Workload{Name: "ordinary", Namespace: "ns", Labels: subj.Workload.Labels}})
+		ordinary, err := s.ResolveProfiles(
+			t.Context(),
+			subject.Subject{
+				Workload: subject.Workload{Name: "ordinary", Namespace: "ns", Labels: subj.Workload.Labels},
+			},
+		)
 		if err != nil || len(ordinary) != 1 {
 			t.Fatalf("ordinary request: %v, %v", ordinary, err)
 		}
@@ -328,8 +369,13 @@ func TestResolveProfilesRejectsUnpublishedSandbox(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := MakeFakeStore()
 				sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-					Name: "sbx-1", Namespace: "ns", UID: "new", ResourceVersion: "2",
-					Annotations: map[string]string{securityprofile.AnnotationSecurityRules: "invalid first version"},
+					Name:            "sbx-1",
+					Namespace:       "ns",
+					UID:             "new",
+					ResourceVersion: "2",
+					Annotations: map[string]string{
+						securityprofile.AnnotationSecurityRules: "invalid first version",
+					},
 				}}
 				if recreate {
 					old := inlineProfile("sbx-1", "ns", "1")
@@ -337,21 +383,34 @@ func TestResolveProfilesRejectsUnpublishedSandbox(t *testing.T) {
 					s.applyBatch([]krt.Event[securityprofile.Profile]{{New: old, Event: controllers.EventAdd}})
 				}
 				s.sandbox = func(_ context.Context, subj subject.Subject) (sandboxSource, bool, error) {
-					return testSandboxSource(subj, string(sandbox.UID)), sandbox.Annotations[securityprofile.AnnotationSecurityRules] != "", nil
+					return testSandboxSource(
+						subj,
+						string(sandbox.UID),
+					), sandbox.Annotations[securityprofile.AnnotationSecurityRules] != "", nil
 				}
 				s.SandboxProfileSet(sandbox)
 				ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 				defer cancel()
-				got, err := s.ResolveProfiles(ctx, subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}})
+				got, err := s.ResolveProfiles(
+					ctx,
+					subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+				)
 				if !errors.Is(err, context.DeadlineExceeded) || len(got) != 0 {
 					t.Fatalf("unpublished Sandbox = %v, %v; want deadline", got, err)
 				}
-				if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}}); len(got) != 0 {
+				if got := s.ProfilesFor(
+					subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+				); len(
+					got,
+				) != 0 {
 					t.Fatal("recreated Sandbox inherited predecessor's policy")
 				}
 				// An explicitly empty policy needs no compiled publication.
 				delete(sandbox.Annotations, securityprofile.AnnotationSecurityRules)
-				if _, err := s.ResolveProfiles(t.Context(), subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}}); err != nil {
+				if _, err := s.ResolveProfiles(
+					t.Context(),
+					subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "ns"}},
+				); err != nil {
 					t.Fatal(err)
 				}
 			})
@@ -411,7 +470,9 @@ func TestSandboxLookupBeforeWatch(t *testing.T) {
 	}
 	subj.Sandbox = nil
 	sandbox := &metav1.PartialObjectMetadata{ObjectMeta: metav1.ObjectMeta{
-		Name: subj.Workload.Name, Namespace: subj.Workload.Namespace, UID: "uid-1",
+		Name:        subj.Workload.Name,
+		Namespace:   subj.Workload.Namespace,
+		UID:         "uid-1",
 		Annotations: map[string]string{securityprofile.AnnotationSecurityRules: "pending"},
 	}}
 	metadata := c.Metadata().(*metadatafake.FakeMetadataClient)
@@ -435,7 +496,11 @@ func TestSandboxLookupBeforeWatch(t *testing.T) {
 	}
 	subj.Sandbox = nil
 	boom := errors.New("API unavailable")
-	metadata.PrependReactor("get", "sandboxes", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, boom })
+	metadata.PrependReactor(
+		"get",
+		"sandboxes",
+		func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, boom },
+	)
 	if _, err := s.ResolveProfiles(t.Context(), subj); !errors.Is(err, boom) {
 		t.Fatalf("API failure = %v, want fail closed", err)
 	}

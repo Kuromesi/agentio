@@ -158,9 +158,11 @@ func TestFinishAfterSendCommitCannotBeOverwrittenByLaterTeardown(t *testing.T) {
 // A stream that never resolved carries no logger, and finishStream must not
 // trip over the nil.
 func TestFinishStreamWithoutResolutionDoesNotPanic(t *testing.T) {
-	srv := NewServer(ServerDeps{Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
-		return engine.Resolution{}, nil
-	}})
+	srv := NewServer(
+		ServerDeps{Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			return engine.Resolution{}, nil
+		}},
+	)
 
 	state := newStreamState()
 	state.markRequestSeen()

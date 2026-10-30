@@ -43,7 +43,17 @@ func testUnitID() filter.UnitID {
 // RawQuery so a builder reading the wrong one is visible.
 func testStream() *filter.Stream {
 	return &filter.Stream{
-		Caller:    filter.CallerContext{Token: &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"}, Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "agent-0", IP: "10.0.0.8", Labels: map[string]string{"app": "agent"}}}},
+		Caller: filter.CallerContext{
+			Token: &filter.SandboxToken{AccessToken: "secret-token", SandboxClientID: "client-1"},
+			Subject: subject.Subject{
+				Workload: subject.Workload{
+					Namespace: "default",
+					Name:      "agent-0",
+					IP:        "10.0.0.8",
+					Labels:    map[string]string{"app": "agent"},
+				},
+			},
+		},
 		RequestID: "req-123",
 		Request: httpreq.HTTPRequest{
 			Host:     "api.example.com",

@@ -99,10 +99,20 @@ func TestExtract(t *testing.T) {
 				AttrSourceAddress:                  "10.0.0.1:34567",
 				AttrDestinationPort:                float64(9443),
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken(b64(tokenJSON)), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", IP: "10.0.0.1", Labels: map[string]string{"app": "sleep", "tier": "web"}}}},
-			wantReq:    fullReq(9443, fullHeaders),
-			wantValid:  true,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Token: filter.NewSandboxToken(b64(tokenJSON)),
+				Subject: subject.Subject{
+					Workload: subject.Workload{
+						Namespace: "default",
+						Name:      "pod-a",
+						IP:        "10.0.0.1",
+						Labels:    map[string]string{"app": "sleep", "tier": "web"},
+					},
+				},
+			},
+			wantReq:   fullReq(9443, fullHeaders),
+			wantValid: true,
 		},
 		{
 			name: "no destination.port keeps authority port",
@@ -111,10 +121,18 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateWorkloadLabels:          b64("app=sleep,tier=web"),
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{"app": "sleep", "tier": "web"}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  true,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Subject: subject.Subject{
+					Workload: subject.Workload{
+						Namespace: "default",
+						Name:      "pod-a",
+						Labels:    map[string]string{"app": "sleep", "tier": "web"},
+					},
+				},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
 		},
 		{
 			name: "CONNECT keeps target authority port instead of proxy destination port",
@@ -123,8 +141,12 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				AttrDestinationPort:                float64(1087),
 			},
-			headers:    connectHeaders,
-			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
+			headers: connectHeaders,
+			wantCaller: filter.CallerContext{
+				Subject: subject.Subject{
+					Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}},
+				},
+			},
 			wantReq: httpreq.HTTPRequest{
 				Host:    "target.example.com",
 				Port:    443,
@@ -141,10 +163,18 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-b",
 				FilterStateWorkloadLabels:          b64("app=sleep"),
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns1", Name: "pod-b", Labels: map[string]string{"app": "sleep"}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  true,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Subject: subject.Subject{
+					Workload: subject.Workload{
+						Namespace: "ns1",
+						Name:      "pod-b",
+						Labels:    map[string]string{"app": "sleep"},
+					},
+				},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
 		},
 		{
 			name: "unparseable sandbox.token retained without parsing",
@@ -153,10 +183,15 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateSandboxToken:            "!!!not-base64-and-not-json!!!",
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken("!!!not-base64-and-not-json!!!"), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  true,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Token: filter.NewSandboxToken("!!!not-base64-and-not-json!!!"),
+				Subject: subject.Subject{
+					Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}},
+				},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
 		},
 		{
 			name: "raw JSON sandbox.token retained without parsing",
@@ -165,10 +200,15 @@ func TestExtract(t *testing.T) {
 				FilterStateDownstreamPeerName:      "pod-a",
 				FilterStateSandboxToken:            tokenJSON,
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Token: filter.NewSandboxToken(tokenJSON), Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  true,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Token: filter.NewSandboxToken(tokenJSON),
+				Subject: subject.Subject{
+					Workload: subject.Workload{Namespace: "default", Name: "pod-a", Labels: map[string]string{}},
+				},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: true,
 		},
 		{
 			name: "missing pod name preserves target for static authorization",
@@ -177,20 +217,30 @@ func TestExtract(t *testing.T) {
 				FilterStateWorkloadLabels:          b64("app=sleep"),
 				AttrSourceAddress:                  "10.0.0.2:1234",
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Namespace: "default", IP: "10.0.0.2", Labels: map[string]string{"app": "sleep"}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  false,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Subject: subject.Subject{
+					Workload: subject.Workload{
+						Namespace: "default",
+						IP:        "10.0.0.2",
+						Labels:    map[string]string{"app": "sleep"},
+					},
+				},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: false,
 		},
 		{
 			name: "missing pod namespace fails identity",
 			attrFields: map[string]any{
 				FilterStateDownstreamPeerName: "pod-a",
 			},
-			headers:    fullHeaders,
-			wantCaller: filter.CallerContext{Subject: subject.Subject{Workload: subject.Workload{Name: "pod-a", Labels: map[string]string{}}}},
-			wantReq:    fullReq(8443, fullHeaders),
-			wantValid:  false,
+			headers: fullHeaders,
+			wantCaller: filter.CallerContext{
+				Subject: subject.Subject{Workload: subject.Workload{Name: "pod-a", Labels: map[string]string{}}},
+			},
+			wantReq:   fullReq(8443, fullHeaders),
+			wantValid: false,
 		},
 	}
 
@@ -315,7 +365,10 @@ func TestExtractFilterStateString(t *testing.T) {
 		{
 			name: "no fuzzy suffix fallback",
 			attrs: func() map[string]*structpb.Struct {
-				inner, _ := structpb.NewStruct(map[string]interface{}{"caller.name": "my-pod"})
+				inner, err := structpb.NewStruct(map[string]any{"caller.name": "my-pod"})
+				if err != nil {
+					t.Fatal(err)
+				}
 				return map[string]*structpb.Struct{ExtProcAttrsKey: inner}
 			}(),
 			key:      "name",
@@ -501,8 +554,11 @@ func TestExtractWorkloadIdentityPrecedence(t *testing.T) {
 
 func TestExtractPolicyIdentitiesFromCapturedContext(t *testing.T) {
 	headers := makeHTTPHeaders(map[string]string{
-		":method": "GET", ":authority": "api.example.com", ":path": "/",
-		"x-agentio-workload-uid": "forged-workload", "x-agentio-sandbox-id": "forged-sandbox",
+		":method":                "GET",
+		":authority":             "api.example.com",
+		":path":                  "/",
+		"x-agentio-workload-uid": "forged-workload",
+		"x-agentio-sandbox-id":   "forged-sandbox",
 	})
 	for _, captured := range []bool{false, true} {
 		fields := map[string]any{FilterStateWorkloadNamespace: "ns", FilterStateWorkloadName: "pod"}

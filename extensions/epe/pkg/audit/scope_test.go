@@ -33,7 +33,10 @@ import (
 // which is exactly the production symptom (an erroring audit `when` silently
 // drops the event).
 func TestAuditScopeActivationShadowsResult(t *testing.T) {
-	s := &Scope{Scope: *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil), Result: "blocked"}
+	s := &Scope{
+		Scope:  *inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil),
+		Result: "blocked",
+	}
 	tests := []struct {
 		name string
 		expr string
@@ -115,7 +118,10 @@ func TestScopeActivation_AllFieldsPopulated(t *testing.T) {
 	}{
 		{name: "result", expr: `result == "blocked"`},
 
-		{name: "request scalars", expr: `request.host == "example.com" && request.path == "/api/v1/data" && request.method == "POST" && request.scheme == "https"`},
+		{
+			name: "request scalars",
+			expr: `request.host == "example.com" && request.path == "/api/v1/data" && request.method == "POST" && request.scheme == "https"`,
+		},
 		// This pins that `port` is projected as an integer kind at all: a
 		// string or an absent projection fails it. It does not pin the Go
 		// width — cel-go normalises every Go integer kind to types.Int, so
@@ -190,8 +196,10 @@ func TestAuditScopeRendersTemplatePaths(t *testing.T) {
 // TestScopeMatchedCriteriaRendersTemplatePaths verifies the compatibility
 // accessor through the same template renderer used by webhooks.
 func TestScopeMatchedCriteriaRendersTemplatePaths(t *testing.T) {
-	tmpl, err := eval.CompileTemplate("matched-criteria",
-		`{{ .MatchedCriteria.Host }}|{{ .MatchedCriteria.Method }}|{{ .MatchedCriteria.Path }}|{{ .MatchedCriteria.Port }}|{{ index .MatchedCriteria.Headers "x-user" }}|{{ index .MatchedCriteria.QueryParams "q" }}`)
+	tmpl, err := eval.CompileTemplate(
+		"matched-criteria",
+		`{{ .MatchedCriteria.Host }}|{{ .MatchedCriteria.Method }}|{{ .MatchedCriteria.Path }}|{{ .MatchedCriteria.Port }}|{{ index .MatchedCriteria.Headers "x-user" }}|{{ index .MatchedCriteria.QueryParams "q" }}`,
+	)
 	if err != nil {
 		t.Fatalf("CompileTemplate: %v", err)
 	}

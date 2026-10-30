@@ -66,7 +66,11 @@ func BenchmarkReadinessReady(b *testing.B) {
 // Source lookup models a local cache hit; no API server or network is simulated.
 // Repeated invalidations may coalesce naturally, as in the actual store.
 func BenchmarkReadinessPending(b *testing.B) {
-	for _, tc := range []struct{ waiters, keys, unrelated int }{
+	for _, tc := range []struct {
+		waiters   int
+		keys      int
+		unrelated int
+	}{
 		{1, 1, 0}, {32, 32, 0}, {256, 256, 0},
 		{32, 32, 4}, {256, 256, 4}, {256, 1, 0},
 	} {

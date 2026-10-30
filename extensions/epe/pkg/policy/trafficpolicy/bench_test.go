@@ -107,7 +107,9 @@ func benchFixture(count int) (*benchSource, *store.Aggregate, *resolver, subject
 	aggregate := store.NewAggregate(xdsstore.New(source))
 	RegisterQueries(aggregate, "Kubernetes")
 	r := &resolver{source: aggregate}
-	return source, aggregate, r, subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod-0", IP: "192.0.2.1"}}
+	return source, aggregate, r, subject.Subject{
+		Workload: subject.Workload{Namespace: "ns", Name: "pod-0", IP: "192.0.2.1"},
+	}
 }
 
 func BenchmarkResourceQueries(b *testing.B) {

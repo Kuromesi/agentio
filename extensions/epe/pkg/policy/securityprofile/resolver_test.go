@@ -38,7 +38,16 @@ func TestResolverSuppliesStreamLoggerWhenPolicyMatches(t *testing.T) {
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
 	resolve := NewResolver(benchStore{profiles: []*Profile{p}}, regs, nil)
 
-	subject := subject.Subject{Workload: subject.Workload{UID: "native:workload", Name: "pod", Namespace: "ns", IP: "192.0.2.1", Labels: map[string]string{"app": "test"}}, Sandbox: &subject.Sandbox{UID: "kruise:sandbox"}}
+	subject := subject.Subject{
+		Workload: subject.Workload{
+			UID:       "native:workload",
+			Name:      "pod",
+			Namespace: "ns",
+			IP:        "192.0.2.1",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Sandbox: &subject.Sandbox{UID: "kruise:sandbox"},
+	}
 	res, err := resolve(context.Background(), subject, testRequest("example.com"))
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -46,7 +55,12 @@ func TestResolverSuppliesStreamLoggerWhenPolicyMatches(t *testing.T) {
 	if len(res.Units) != 1 {
 		t.Fatalf("units = %d, want 1", len(res.Units))
 	}
-	wantWorkload := inputs.Workload{Name: "pod", Namespace: "ns", IP: "192.0.2.1", Labels: map[string]string{"app": "test"}}
+	wantWorkload := inputs.Workload{
+		Name:      "pod",
+		Namespace: "ns",
+		IP:        "192.0.2.1",
+		Labels:    map[string]string{"app": "test"},
+	}
 	if got := res.Units[0].Scope.Pod(); !reflect.DeepEqual(got, wantWorkload) {
 		t.Fatalf("expression pod = %+v, want %+v", got, wantWorkload)
 	}

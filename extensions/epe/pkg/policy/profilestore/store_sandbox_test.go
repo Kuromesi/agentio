@@ -20,13 +20,14 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/tokentransform"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 func inlineProfile(name, ns, version string) *securityprofile.Profile {
@@ -62,10 +63,18 @@ func TestStoreInlineProfiles(t *testing.T) {
 	if len(got) != 1 || got[0].Meta.Version != "1" {
 		t.Fatalf("Matches(sbx-1) = %+v, want the installed inline profile", got)
 	}
-	if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-2", Namespace: "sandboxes"}}); len(got) != 0 {
+	if got := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-2", Namespace: "sandboxes"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("Matches(sbx-2) = %+v, want no match for another identity", got)
 	}
-	if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "other"}}); len(got) != 0 {
+	if got := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "other"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("Matches(other/sbx-1) = %+v, want no match across namespaces", got)
 	}
 	if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Namespace: "sandboxes"}}); len(got) != 0 {
@@ -91,7 +100,11 @@ func TestStoreInlineProfiles(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Event: controllers.EventDelete, Old: p2},
 	})
-	if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}}); len(got) != 0 {
+	if got := s.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("after delete = %+v, want no profile", got)
 	}
 }
@@ -122,7 +135,11 @@ func TestStoreInlineAndCRDProfilesShareIdentity(t *testing.T) {
 		{Event: controllers.EventAdd, New: inline},
 	})
 
-	got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}}})
+	got := s.ProfilesFor(
+		subject.Subject{
+			Workload: subject.Workload{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}},
+		},
+	)
 	if len(got) != 2 {
 		t.Fatalf("Matches = %d profiles, want the CRD match plus the inline profile", len(got))
 	}
@@ -135,7 +152,12 @@ func TestStoreInlineAndCRDProfilesShareIdentity(t *testing.T) {
 	s.applyBatch([]krt.Event[securityprofile.Profile]{
 		{Event: controllers.EventDelete, Old: inline},
 	})
-	if got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}}}); len(got) != 1 || got[0].Meta.Match != securityprofile.MatchSelector {
+	if got := s.ProfilesFor(
+		subject.Subject{
+			Workload: subject.Workload{Name: "shared", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}},
+		},
+	); len(got) != 1 ||
+		got[0].Meta.Match != securityprofile.MatchSelector {
 		t.Fatalf("after inline delete = %+v, want only the CRD profile", got)
 	}
 }
@@ -174,8 +196,13 @@ func TestStoreInlineBatchReusesLabelIndex(t *testing.T) {
 
 	// The reused index must still be the right answer, and the inline profile
 	// must be visible through it.
-	got := s.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}}})
-	if len(got) != 2 || got[0].Meta.Match != securityprofile.MatchSelector || got[1].Meta.Match != securityprofile.MatchSandbox {
+	got := s.ProfilesFor(
+		subject.Subject{
+			Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes", Labels: map[string]string{"app": "x"}},
+		},
+	)
+	if len(got) != 2 || got[0].Meta.Match != securityprofile.MatchSelector ||
+		got[1].Meta.Match != securityprofile.MatchSandbox {
 		t.Fatalf("Matches = %+v, want the CRD match plus the inline profile", got)
 	}
 
@@ -235,7 +262,11 @@ func TestInlineProfileInvalidVersionUsesLastKnownGood(t *testing.T) {
 
 	// A bad first version installs nothing.
 	store.SandboxProfileSet(sandbox("1", string(badRules)))
-	if got := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}}); len(got) != 0 {
+	if got := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("Matches = %+v, want nothing for a bad first version", got)
 	}
 
@@ -264,7 +295,11 @@ func TestInlineProfileInvalidVersionUsesLastKnownGood(t *testing.T) {
 	reassigned := sandbox("5", string(badRules))
 	reassigned.Labels = map[string]string{v1alpha1.LabelSandboxID: "new-delivery"}
 	store.SandboxProfileSet(reassigned)
-	if got := store.ProfilesFor(subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}}); len(got) != 0 {
+	if got := store.ProfilesFor(
+		subject.Subject{Workload: subject.Workload{Name: "sbx-1", Namespace: "sandboxes"}},
+	); len(
+		got,
+	) != 0 {
 		t.Fatalf("new delivery inherited the previous identity's rules: %+v", got)
 	}
 }

@@ -190,6 +190,7 @@ func run() error {
 	if printEnv.Enabled {
 		return printEnv.Write(os.Stdout, envdoc.Options{
 			Prefixes: []string{
+				"AGENTIO_KUBERNETES_API_",
 				"IDENTITY_PROVIDER_",
 				"TOKEN_CACHE_",
 				"STS_CACHE_",

@@ -18,10 +18,11 @@ import (
 	"strconv"
 	"testing"
 
+	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
+
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
-	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 )
 
 // benchSink defeats dead-code elimination.
@@ -127,7 +128,14 @@ func BenchmarkResolver(b *testing.B) {
 			resolve := NewResolver(benchStore{profiles: profiles}, regs, nil)
 			ctx := context.Background()
 			req := testRequest("api.example.com")
-			subj := subject.Subject{Workload: subject.Workload{Name: "agent-pod-abc123", Namespace: "ns", IP: "10.244.1.37", Labels: map[string]string{"app": "agent", "tier": "web"}}}
+			subj := subject.Subject{
+				Workload: subject.Workload{
+					Name:      "agent-pod-abc123",
+					Namespace: "ns",
+					IP:        "10.244.1.37",
+					Labels:    map[string]string{"app": "agent", "tier": "web"},
+				},
+			}
 			if _, err := resolve(ctx, subj, req); err != nil {
 				b.Fatal(err)
 			}

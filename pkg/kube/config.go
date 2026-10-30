@@ -19,22 +19,31 @@ import (
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	"github.com/openkruise/agentio/pkg/features"
 )
 
 // LoadConfig builds a REST config from an explicit kubeconfig path, falling
 // back to the in-cluster config when the path is empty. Both binaries
 // (agentiod and epe) take a -kubeconfig flag with this exact semantics.
 func LoadConfig(kubeconfigPath string) (*rest.Config, error) {
+	if err := features.ValidateKubernetesAPILimits(); err != nil {
+		return nil, err
+	}
+	var config *rest.Config
+	var err error
 	if kubeconfigPath != "" {
-		config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
 			return nil, fmt.Errorf("load kubeconfig: %w", err)
 		}
-		return config, nil
+	} else {
+		config, err = rest.InClusterConfig()
+		if err != nil {
+			return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
+		}
 	}
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("load in-cluster Kubernetes config: %w", err)
-	}
+	config.QPS = float32(features.KubernetesAPIQPS)
+	config.Burst = features.KubernetesAPIBurst
 	return config, nil
 }

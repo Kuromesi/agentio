@@ -34,10 +34,11 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube/controllers"
 	"github.com/openkruise/agentio/pkg/model"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const (
@@ -364,7 +365,8 @@ func (s *store) ResolveProfiles(ctx context.Context, subject subject.Subject) ([
 		if !found {
 			return selectorProfilesFor(snap, subject.Workload), nil
 		}
-		if profile := snap.installed.sandbox[source.name]; profile != nil && profile.Meta.SourceIdentity == source.identity &&
+		if profile := snap.installed.sandbox[source.name]; profile != nil &&
+			profile.Meta.SourceIdentity == source.identity &&
 			(subject.Sandbox == nil || profile.Meta.SandboxUID == subject.Sandbox.UID) {
 			return append(selectorProfilesFor(snap, w), profile), nil
 		}
@@ -402,7 +404,11 @@ func selectorProfilesFor(snap *profileSnapshot, workload subject.Workload) []*se
 // administrator profiles: tenant rules must never evaluate ahead of them. It is
 // one map lookup, because identity is the storage key. A zero subject.Workload.Name (e.g.
 // the admin listing endpoint) skips the lookup.
-func appendSandboxProfile(matched []*securityprofile.Profile, snap *profileSnapshot, subject subject.Subject) []*securityprofile.Profile {
+func appendSandboxProfile(
+	matched []*securityprofile.Profile,
+	snap *profileSnapshot,
+	subject subject.Subject,
+) []*securityprofile.Profile {
 	if subject.Workload.Name == "" {
 		return matched
 	}
