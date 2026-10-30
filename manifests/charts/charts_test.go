@@ -274,7 +274,7 @@ func TestSandboxModePropagation(t *testing.T) {
 	for _, name := range []string{"AGENTIO_SANDBOX_MODE", "ENABLE_SANDBOX_MANAGER"} {
 		requireRenderError(t, "managed by sandbox.enabled", "--set", "profile=ambient", "--set-string", "ztunnel.env."+name+"=true")
 	}
-	requireRenderError(t, "want boolean", "--set-string", "sandbox.enabled=true")
+	requireRenderError(t, "boolean", "--set-string", "sandbox.enabled=true")
 }
 
 func TestSidecarProfile(t *testing.T) {
