@@ -272,7 +272,14 @@ func TestSandboxModePropagation(t *testing.T) {
 	}
 	requireRenderError(t, "managed by sandbox.enabled", "--set-string", "epe.env.AGENTIO_SANDBOX_MODE=true")
 	for _, name := range []string{"AGENTIO_SANDBOX_MODE", "ENABLE_SANDBOX_MANAGER"} {
-		requireRenderError(t, "managed by sandbox.enabled", "--set", "profile=ambient", "--set-string", "ztunnel.env."+name+"=true")
+		requireRenderError(
+			t,
+			"managed by sandbox.enabled",
+			"--set",
+			"profile=ambient",
+			"--set-string",
+			"ztunnel.env."+name+"=true",
+		)
 	}
 	requireRenderError(t, "boolean", "--set-string", "sandbox.enabled=true")
 }
