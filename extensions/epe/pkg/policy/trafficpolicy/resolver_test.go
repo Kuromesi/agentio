@@ -29,6 +29,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	ext "github.com/openkruise/agentio/api/extensions/v1"
+	"github.com/openkruise/agentio/extensions/epe/pkg/store"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/model"
 
@@ -37,8 +39,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
-	"github.com/openkruise/agentio/extensions/epe/pkg/store"
 )
 
 type fakeStore struct {
@@ -161,21 +161,21 @@ func TestResolverCacheUpdates(t *testing.T) {
 	f := testStore()
 	source := testAggregate(f)
 	s := &resolver{source: source}
-	pod := inputs.Pod{Namespace: "ns", Name: "pod", IP: "192.0.2.1"}
+	subj := subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod", IP: "192.0.2.1"}}
 	target := netip.MustParseAddrPort("203.0.113.7:443")
-	cfg, err := s.config(t.Context(), pod)
+	cfg, err := s.config(t.Context(), subj)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cfg.Evaluate(target).Action != egressauthz.Allow {
 		t.Fatal("not allowed")
 	}
-	if _, err := s.config(t.Context(), pod); err != nil {
+	if _, err := s.config(t.Context(), subj); err != nil {
 		t.Fatal("published index not used", err)
 	}
 	f.put(store.TrafficPolicy, "allow", &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{}})
 	source.Refresh()
-	updated, err := s.config(t.Context(), pod)
+	updated, err := s.config(t.Context(), subj)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestResolverCacheUpdates(t *testing.T) {
 	f.ready = false
 	f.notify()
 	source.Refresh()
-	if _, err := s.config(t.Context(), pod); err == nil {
+	if _, err := s.config(t.Context(), subj); err == nil {
 		t.Fatal("unsynchronized resources accepted")
 	}
 	f.ready = true
@@ -197,7 +197,7 @@ func TestResolverCacheUpdates(t *testing.T) {
 	f.err = fmt.Errorf("missing resource")
 	f.notify()
 	source.Refresh()
-	if _, err := s.config(t.Context(), pod); err == nil {
+	if _, err := s.config(t.Context(), subj); err == nil {
 		t.Fatal("lookup error ignored")
 	}
 }
@@ -210,7 +210,7 @@ func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 		NewAuthorizer(testAggregate(f)),
 	).Authorize
 	stream := &filter.Stream{Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443}, Info: filter.NewStreamInfo()}
-	stream.Peer.Pod.Namespace, stream.Peer.Pod.Name = "ns", "pod"
+	stream.Caller.Subject.Workload = subject.Workload{Namespace: "ns", Name: "pod"}
 	target, reply, err := authorize(t.Context(), stream)
 	if err != nil || reply != nil || target == nil || target.Address.String() != "203.0.113.7:443" {
 		t.Fatalf("empty binding should allow: target=%v reply=%v err=%v", target, reply, err)
@@ -222,27 +222,48 @@ func TestAuthorizerUsesWorkloadBinding(t *testing.T) {
 	}
 }
 
+func TestAuthorizerAcceptsWorkloadUIDOnly(t *testing.T) {
+	authorizer := NewAuthorizer(testAggregate(testStore()))
+	for _, workload := range []subject.Workload{{UID: "uid"}, {}} {
+		stream := &filter.Stream{
+			Caller: filter.CallerContext{Subject: subject.Subject{
+				Workload: workload,
+				Sandbox:  &subject.Sandbox{UID: "kruise:sbx"},
+			}},
+			Info: filter.NewStreamInfo(),
+		}
+		got, err := authorizer.Authorize(
+			t.Context(),
+			stream,
+			[]netip.AddrPort{netip.MustParseAddrPort("203.0.113.7:443")},
+		)
+		if err != nil || (workload.UID != "" && len(got) != 1) || (workload.UID == "" && len(got) != 0) {
+			t.Fatalf("workload=%v candidates=%v err=%v", workload, got, err)
+		}
+	}
+}
+
 func TestCrossStorePoliciesAndFetchRebind(t *testing.T) {
 	workloads := testStore()
 	workloads.types = []store.Type{store.Workload}
 	policies := testStore()
 	policies.types = []store.Type{store.TrafficPolicy}
 	source := testAggregate(workloads, policies)
-	pod := inputs.Pod{Namespace: "ns", Name: "pod"}
-	result, err := lookup(t.Context(), source, pod)
+	subj := subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}
+	result, err := lookup(t.Context(), source, subj)
 	if err != nil || len(result.TrafficPolicies) != 1 {
 		t.Fatalf("cross-store lookup: %+v %v", result, err)
 	}
 	workloads.bind("missing")
 	source.Refresh()
-	if _, err := lookup(t.Context(), source, pod); err == nil {
+	if _, err := lookup(t.Context(), source, subj); err == nil {
 		t.Fatal("missing policy silently skipped")
 	}
 	policies.fetch = func(key store.Key) {
 		policies.put(key.Type, key.Name, &sec.TrafficPolicy{})
 		workloads.bind("allow", "missing")
 	}
-	result, err = lookup(t.Context(), source, pod)
+	result, err = lookup(t.Context(), source, subj)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +275,7 @@ func TestCrossStorePoliciesAndFetchRebind(t *testing.T) {
 	w.Extensions = nil
 	workloads.put(store.Workload, "uid", w)
 	source.Refresh()
-	if _, err := lookup(t.Context(), source, pod); err == nil {
+	if _, err := lookup(t.Context(), source, subj); err == nil {
 		t.Fatal("missing binding treated as empty")
 	}
 }
@@ -263,7 +284,7 @@ func TestResourcesForIndexesPrecedenceAndDependencyReuse(t *testing.T) {
 	high, low := testStore(), testStore()
 	high.bind()
 	source := testAggregate(high, low)
-	subject := store.Subject{Namespace: "ns", Name: "pod", IP: "192.0.2.1"}
+	subject := subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod", IP: "192.0.2.1"}}
 	resources, err := source.ResourcesFor(store.TrafficPolicy, subject)
 	if err != nil || len(resources) != 0 {
 		t.Fatal("shadowed source matched", resources, err)
@@ -304,6 +325,62 @@ func TestResourcesForIndexesPrecedenceAndDependencyReuse(t *testing.T) {
 	}
 }
 
+func TestResourcesForUsesExplicitWorkloadUID(t *testing.T) {
+	f := testStore()
+	emptyBinding, err := anypb.New(&ext.PolicyReference{TypeUrl: model.TrafficPolicyType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.put(store.Workload, "other-uid", &workload.Workload{
+		Name:       "pod",
+		Namespace:  "ns",
+		Extensions: []*workload.Extension{{Name: "traffic-policy-reference", Config: emptyBinding}},
+	})
+	source := testAggregate(f)
+	for _, tc := range []struct {
+		uid  string
+		want int
+	}{{"uid", 1}, {"other-uid", 0}} {
+		policies, err := source.ResourcesFor(
+			store.TrafficPolicy,
+			subject.Subject{Workload: subject.Workload{UID: tc.uid}},
+		)
+		if err != nil || len(policies) != tc.want {
+			t.Fatalf("UID %q policies = %v, %v", tc.uid, policies, err)
+		}
+	}
+	if _, err := source.ResourcesFor(
+		store.TrafficPolicy,
+		subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+	); err == nil {
+		t.Fatal("ambiguous namespace/name accepted without a UID")
+	}
+	_, err = source.ResourcesFor(
+		store.TrafficPolicy,
+		subject.Subject{Workload: subject.Workload{UID: "missing-uid", Namespace: "ns", Name: "pod"}},
+	)
+	var missing *store.MissingResource
+	if !errors.As(err, &missing) || missing.Key != (store.Key{Type: store.Workload, Name: "missing-uid"}) {
+		t.Fatalf("missing explicit UID = %v, want exact resource request without name fallback", err)
+	}
+}
+
+func TestResourcesForRequiresWorkloadIdentity(t *testing.T) {
+	source := testAggregate(testStore())
+	for _, subject := range []subject.Subject{
+		{},
+		{Sandbox: &subject.Sandbox{UID: "kruise:sbx"}},
+		{Workload: subject.Workload{Namespace: "ns"}},
+		{Workload: subject.Workload{Labels: map[string]string{"app": "test"}}},
+	} {
+		_, err := source.ResourcesFor(store.TrafficPolicy, subject)
+		var missing *store.MissingResource
+		if err == nil || errors.As(err, &missing) {
+			t.Fatalf("missing Workload identity should fail without synthesizing a resource to fetch: %v", err)
+		}
+	}
+}
+
 func TestWorkloadConfigDoesNotDependOnSourceIP(t *testing.T) {
 	for _, addresses := range [][][]byte{nil, {{192, 0, 2, 1}}, {{192, 0, 2, 1}, netip.MustParseAddr("2001:db8::1").AsSlice()}} {
 		f := testStore()
@@ -312,12 +389,18 @@ func TestWorkloadConfigDoesNotDependOnSourceIP(t *testing.T) {
 		f.put(store.Workload, "uid", w)
 		source := testAggregate(f)
 		resolver := &resolver{source: source}
-		expected, err := resolver.config(t.Context(), inputs.Pod{Namespace: "ns", Name: "pod"})
+		expected, err := resolver.config(
+			t.Context(),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, ip := range []string{"", "192.0.2.1", "2001:db8::1", "198.51.100.9", "not-an-ip"} {
-			got, err := resolver.config(t.Context(), inputs.Pod{Namespace: "ns", Name: "pod", IP: ip})
+			got, err := resolver.config(
+				t.Context(),
+				subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod", IP: ip}},
+			)
 			if err != nil {
 				t.Fatalf("source IP %q affected lookup: %v", ip, err)
 			}
@@ -343,7 +426,11 @@ func TestLookupFetchesAllMissingPolicies(t *testing.T) {
 			f.put(key.Type, key.Name, &sec.TrafficPolicy{})
 		}
 		started := time.Now()
-		result, err := lookup(t.Context(), testAggregate(f), inputs.Pod{Namespace: "ns", Name: "pod"})
+		result, err := lookup(
+			t.Context(),
+			testAggregate(f),
+			subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +460,7 @@ func TestLookupStopsFetchingWhenCanceled(t *testing.T) {
 		f.put(key.Type, key.Name, &sec.TrafficPolicy{})
 		cancel()
 	}
-	_, err := lookup(ctx, testAggregate(f), inputs.Pod{Namespace: "ns", Name: "pod"})
+	_, err := lookup(ctx, testAggregate(f), subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}})
 	if !errors.Is(err, context.Canceled) || calls != 1 {
 		t.Fatalf("error=%v fetches=%d, want cancellation after first fetch", err, calls)
 	}
@@ -415,7 +502,7 @@ func TestLookupPollTermination(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 			defer cancel()
-			_, err := lookup(ctx, source, inputs.Pod{Namespace: "ns", Name: "pod"})
+			_, err := lookup(ctx, source, subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}})
 			if tc.want == nil {
 				if missing, ok := errors.AsType[*store.MissingResource](err); !ok || missing.Key.Name != "missing" {
 					t.Fatalf("want missing resource, got %v", err)
@@ -438,7 +525,9 @@ func TestAuthorizerRecordsUnavailablePolicy(t *testing.T) {
 	source := testStore()
 	source.err = errors.New("xDS unavailable")
 	stream := &filter.Stream{
-		Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+		Caller: filter.CallerContext{
+			Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+		},
 		Request: httpreq.HTTPRequest{Host: "192.0.2.1", Port: 443},
 		Info:    filter.NewStreamInfo(),
 	}
@@ -472,7 +561,9 @@ func TestGlobalDenyPrecedesXDSPolicy(t *testing.T) {
 		{"192.0.2.1", false}, // Global miss preserves workload default-deny.
 	} {
 		stream := &filter.Stream{
-			Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod"}},
+			Caller: filter.CallerContext{
+				Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}},
+			},
 			Request: httpreq.HTTPRequest{Host: tc.host, Port: 443},
 		}
 		target, reply, err := authorize(t.Context(), stream)
@@ -500,7 +591,11 @@ func TestAuthorizerRejectsMissingIdentityBeforeLookup(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			stream := &filter.Stream{
-				Peer: filter.Peer{Pod: tc.pod},
+				Caller: filter.CallerContext{
+					Subject: subject.Subject{
+						Workload: subject.Workload{Namespace: tc.pod.Namespace, Name: tc.pod.Name},
+					},
+				},
 				Info: filter.NewStreamInfo(),
 			}
 			// No resource store is needed: rejection must precede any lookup.

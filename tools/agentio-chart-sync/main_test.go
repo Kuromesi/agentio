@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -643,6 +644,22 @@ func TestPreparedSandboxControllerBundleCreatesConsumableTrafficProxyConfig(t *t
 		t.Fatalf("first init container = %s (%s), want agentio-init (docker.io/openkruise/proxy-init:latest)", got.Name, got.Image)
 	}
 	proxy := config.InitContainers[1]
+	if slices.Contains(proxy.VolumeMounts, corev1.VolumeMount{
+		Name:      "agentio-sandbox-state",
+		MountPath: "/var/lib/ztunnel/sandbox",
+	}) {
+		t.Fatal("default traffic-proxy unexpectedly mounts Sandbox state")
+	}
+	if slices.ContainsFunc(config.Volumes, func(v corev1.Volume) bool {
+		return v.Name == "agentio-sandbox-state" && v.EmptyDir != nil
+	}) {
+		t.Fatal("default traffic-proxy unexpectedly has a Sandbox state emptyDir")
+	}
+	for _, name := range []string{"AGENTIO_SANDBOX_MODE", "ENABLE_SANDBOX_MANAGER"} {
+		if got := envValue(proxy.Env, name); got != "false" {
+			t.Fatalf("%s = %q, want false", name, got)
+		}
+	}
 	if proxy.Name != "traffic-proxy" || proxy.Image != "docker.io/openkruise/ztunnel:latest" {
 		t.Fatalf("native sidecar = %s (%s), want traffic-proxy (docker.io/openkruise/ztunnel:latest)", proxy.Name, proxy.Image)
 	}

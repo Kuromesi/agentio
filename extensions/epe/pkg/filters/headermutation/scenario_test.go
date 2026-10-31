@@ -40,7 +40,7 @@ func TestScenario_RequestHeaderMutationsReachExtProcWire(t *testing.T) {
 	}`)
 	verdict := h.Run(t, enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		Header("X-Legacy", "old").
-		Peer("default", "sandbox-a", map[string]string{"app": "demo"}))
+		Workload("default", "sandbox-a", map[string]string{"app": "demo"}))
 	if verdict.Err != nil {
 		t.Fatalf("Process: %v", verdict.Err)
 	}
@@ -70,7 +70,7 @@ func TestScenario_ResponseHeaderMutationsReachExtProcWire(t *testing.T) {
 	}`)
 	msgs := enginetest.NewRequest("GET", "api.example.com", "/v1/items").
 		Header("X-Trace", "abc123").
-		Peer("default", "sandbox-a", map[string]string{"app": "demo"}).
+		Workload("default", "sandbox-a", map[string]string{"app": "demo"}).
 		Build()
 	msgs = append(msgs, &extProcPb.ProcessingRequest{
 		Request: &extProcPb.ProcessingRequest_ResponseHeaders{

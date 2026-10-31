@@ -33,11 +33,11 @@ import (
 // It deliberately carries only non-sensitive request context: identity payloads
 // such as SandboxToken must never be added here.
 type Scope struct {
-	request Request
-	pod     Pod
-	profile Profile
-	rule    Rule
-	inputs  map[string]any
+	request  Request
+	workload Workload
+	profile  Profile
+	rule     Rule
+	inputs   map[string]any
 	// inputsErr marks the declared inputs as unavailable (for example a
 	// ConfigMap-backed input whose ConfigMap does not exist). It poisons only
 	// the inputs slot: CEL binds `inputs` to an error value and the template
@@ -56,7 +56,10 @@ type Scope struct {
 // receivers, so they promote through audit.Scope's embedded value on both
 // pointer and value roots.
 func (s Scope) Request() Request { return s.request }
-func (s Scope) Pod() Pod         { return s.pod }
+
+// Pod preserves the workload accessor used by existing templates.
+func (s Scope) Pod() Workload { return s.workload }
+
 func (s Scope) Profile() Profile { return s.profile }
 func (s Scope) Rule() Rule       { return s.rule }
 
@@ -101,14 +104,21 @@ func WithInputsError(msg string) ScopeOption {
 // NewScope is the only way to obtain a usable Scope. There is deliberately no
 // fallback for a Scope built as a literal: a memoisation that can be silently
 // absent is a second construction path whose failure mode is invisible.
-func NewScope(req Request, pod Pod, profile Profile, rule Rule, in map[string]any, opts ...ScopeOption) *Scope {
+func NewScope(
+	req Request,
+	workload Workload,
+	profile Profile,
+	rule Rule,
+	in map[string]any,
+	opts ...ScopeOption,
+) *Scope {
 	s := &Scope{
-		request: req,
-		pod:     pod,
-		profile: profile,
-		rule:    rule,
-		inputs:  in,
-		cache:   &activationCache{},
+		request:  req,
+		workload: workload,
+		profile:  profile,
+		rule:     rule,
+		inputs:   in,
+		cache:    &activationCache{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -193,10 +203,10 @@ func (s *Scope) buildBag() map[string]any {
 			"queryParams": queryParams,
 		},
 		"pod": map[string]any{
-			"name":      s.pod.Name,
-			"namespace": s.pod.Namespace,
-			"ip":        s.pod.IP,
-			"labels":    orEmpty(s.pod.Labels),
+			"name":      s.workload.Name,
+			"namespace": s.workload.Namespace,
+			"ip":        s.workload.IP,
+			"labels":    orEmpty(s.workload.Labels),
 		},
 		"profile": map[string]string{
 			"name":      s.profile.Name,

@@ -1,4 +1,5 @@
 # ztunnel does not support TPROXY
+{{- $sandboxEnabled := eq (printf "%v" (default false .Values.global.proxyZtunnel.sandboxMode)) "true" -}}
 {{- $interception := (annotation .ObjectMeta `sidecar.istio.io/interceptionMode` .ProxyConfig.InterceptionMode) -}}
 {{- if eq $interception "TPROXY" -}}
   {{- $interception = "REDIRECT" -}}
@@ -225,7 +226,7 @@ spec:
     - ztunnel
     env:
     - name: ENABLE_SANDBOX_MANAGER
-      value: "true"
+      value: "{{ $sandboxEnabled }}"
     - name: AGENTIO_SANDBOX_MODE
       value: "{{ default `false` .Values.global.proxyZtunnel.sandboxMode }}"
 {{- if .Values.global.proxyZtunnel.enableFirewallRules }}
@@ -314,6 +315,10 @@ spec:
       name: agentio-token
     - mountPath: /tmp
       name: tmp
+    {{- if $sandboxEnabled }}
+    - mountPath: /var/lib/ztunnel/sandbox
+      name: agentio-sandbox-state
+    {{- end }}
     {{- if .Values.global.proxyZtunnel.peerCaCrl.enabled }}
     - mountPath: /var/run/secrets/istio/crl
       name: agentio-ca-crl
@@ -348,3 +353,7 @@ spec:
   # pprof needs a writable /tmp, and we don't have that thanks to `readOnlyRootFilesystem: true`, so mount one
   - name: tmp
     emptyDir: {}
+  {{- if $sandboxEnabled }}
+  - name: agentio-sandbox-state
+    emptyDir: {}
+  {{- end }}

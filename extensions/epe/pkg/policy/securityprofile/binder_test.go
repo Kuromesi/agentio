@@ -117,7 +117,7 @@ func TestBindOrdersUnitsByProfileThenRule(t *testing.T) {
 	p1 := compile(t, regs, "alpha", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r1"), matchAllRule("r2")})
 	p2 := compile(t, regs, "beta", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r3")})
 
-	units, err := b.bind([]*Profile{p1, p2}, testRequest("example.com"), inputs.Pod{Namespace: "ns"})
+	units, err := b.bind([]*Profile{p1, p2}, testRequest("example.com"), inputs.Workload{Namespace: "ns"})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestBindSkipsNonMatchingRules(t *testing.T) {
 		matchHostRule("hit", "example.com"),
 		matchHostRule("miss", "other.com"),
 	})
-	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
+	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Workload{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestBinderCopiesRegistrations(t *testing.T) {
 	// Mutating the caller's slice after construction must not change what the
 	// binder does with a profile already projected against it.
 	regs[0].Name = "mutated"
-	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
+	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Workload{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestProjectionRunsOncePerProfileVersion(t *testing.T) {
 	req := testRequest("example.com")
 
 	for i := 0; i < 3; i++ {
-		if _, err := b.bind(profiles, req, inputs.Pod{}); err != nil {
+		if _, err := b.bind(profiles, req, inputs.Workload{}); err != nil {
 			t.Fatalf("bind %d: %v", i, err)
 		}
 	}
@@ -202,7 +202,7 @@ func TestProjectionRunsOncePerProfileVersion(t *testing.T) {
 	}
 
 	bumped := compile(t, regs, "p", "ns", "2", []v1alpha1.SecurityRule{matchAllRule("r")})
-	if _, err := b.bind([]*Profile{bumped}, req, inputs.Pod{}); err != nil {
+	if _, err := b.bind([]*Profile{bumped}, req, inputs.Workload{}); err != nil {
 		t.Fatalf("bind bumped: %v", err)
 	}
 	if calls != 2 {
@@ -223,7 +223,7 @@ func TestProjectionRealErrorFailsClosed(t *testing.T) {
 	b := newBinder(regs)
 
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("r")})
-	if _, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{}); !errors.Is(err, boom) {
+	if _, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Workload{}); !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want wrapped projection error", err)
 	}
 }
@@ -246,7 +246,7 @@ func TestUnmountedFilterYieldsNilSlot(t *testing.T) {
 		Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
 	}
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
-	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
+	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Workload{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestMatchIndexMatchesRuleMatchingIndex(t *testing.T) {
 		},
 	}
 	p := compile(t, regs, "p", "ns", "1", []v1alpha1.SecurityRule{rule})
-	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Pod{})
+	units, err := b.bind([]*Profile{p}, testRequest("example.com"), inputs.Workload{})
 	if err != nil {
 		t.Fatalf("bind: %v", err)
 	}
@@ -287,13 +287,13 @@ func TestInlineAndCRProfilesKeepSeparateProjections(t *testing.T) {
 
 	cr := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("cr-rule")})
 	inline := compile(t, regs, "shared", "ns", "1", []v1alpha1.SecurityRule{matchAllRule("inline-rule")})
-	inline.Meta.Match = MatchPod
+	inline.Meta.Match = MatchSandbox
 
 	req := testRequest("example.com")
-	pod := inputs.Pod{Namespace: "ns", Name: "shared"}
+	workload := inputs.Workload{Namespace: "ns", Name: "shared"}
 
 	for i := 0; i < 3; i++ {
-		units, err := b.bind([]*Profile{cr, inline}, req, pod)
+		units, err := b.bind([]*Profile{cr, inline}, req, workload)
 		if err != nil {
 			t.Fatalf("bind %d: %v", i, err)
 		}

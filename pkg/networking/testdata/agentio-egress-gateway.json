@@ -823,6 +823,18 @@
                             "sharedWithUpstream": "ONCE"
                           },
                           {
+                            "objectKey": "agentio.sandbox.metadata",
+                            "factoryKey": "envoy.hashable_string",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%REQ(X-AGENTIO-SANDBOX-METADATA)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "sharedWithUpstream": "ONCE",
+                            "skipIfEmpty": true
+                          },
+                          {
                             "objectKey": "agentio.peer.certificate",
                             "factoryKey": "envoy.string",
                             "formatString": {
@@ -1374,6 +1386,18 @@
                         "omitEmptyValues": true
                       },
                       "sharedWithUpstream": "ONCE"
+                    },
+                    {
+                      "objectKey": "agentio.sandbox.metadata",
+                      "factoryKey": "envoy.hashable_string",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.sandbox.metadata:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "sharedWithUpstream": "ONCE",
+                      "skipIfEmpty": true
                     },
                     {
                       "objectKey": "agentio.workload.name",

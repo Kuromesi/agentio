@@ -40,7 +40,7 @@ type Server struct {
 	resolve          engine.Resolver
 	eng              *engine.Engine
 	loggers          []filter.StreamLogger
-	// failClosedOnMissingIdentity denies requests when the source pod
+	// failClosedOnMissingIdentity denies requests when the source workload or Sandbox
 	// identity is absent from filter_state; otherwise authorizers enforce
 	// their own identity requirements.
 	failClosedOnMissingIdentity bool
@@ -66,7 +66,7 @@ type ServerDeps struct {
 	// Should be set below Envoy's message_timeout so the filter is
 	// cancelled before Envoy gives up.
 	PluginBudget time.Duration
-	// FailClosedOnMissingIdentity denies requests when the source pod
+	// FailClosedOnMissingIdentity denies requests when the source workload or Sandbox
 	// identity is absent from filter_state (e.g. a misconfigured metadata
 	// exchange). With the default (false), independent authorization still runs.
 	FailClosedOnMissingIdentity bool
@@ -178,7 +178,7 @@ func (s *Server) Process(srv extProcPb.ExternalProcessor_ProcessServer) (retErr 
 		if err != nil {
 			// The failing message type is what triages this. The message itself
 			// is not logged, at any level: request headers carry
-			// x-agentio-sandbox-token, so dumping it wrote a live sandbox
+			// x-agentio-sandbox-metadata (or legacy token), so dumping it wrote a live sandbox
 			// credential into the log whenever debug was enabled.
 			logger.Error(err, "failed to process request",
 				"messageType", messageTypeName(req))
@@ -367,7 +367,7 @@ func (s *Server) processRequestBody(
 }
 
 // messageTypeName names an ext_proc request message without rendering it. The
-// message is never logged: request headers carry x-agentio-sandbox-token, and a
+// message is never logged: request headers carry Sandbox identity metadata, and a
 // body carries whatever the caller sent.
 func messageTypeName(req *extProcPb.ProcessingRequest) string {
 	switch req.GetRequest().(type) {

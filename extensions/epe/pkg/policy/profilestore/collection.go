@@ -33,17 +33,23 @@ import (
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/features"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/kube"
 	"github.com/openkruise/agentio/pkg/kube/kclient"
+	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/registry"
+	"github.com/openkruise/agentio/pkg/registry/kubernetes/kruise"
 
 	"github.com/go-logr/logr"
 	agentsv1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/watch"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -75,11 +81,15 @@ var (
 // boundary, so a static authoring error — an uncompilable credential
 // parameter CEL expression, a malformed action document — rejects the version
 // here and the store keeps serving the last known good one, instead of
-// surfacing on the first matching request where the ext_proc provider's
-// global failureModeAllow would decide the outcome. The request path reads
+// surfacing during rule evaluation on the first matching request. The request path reads
 // that projection; it never builds one. Per-Sandbox profiles are projected
 // here too, under the same failure semantics — see newSandboxCollection.
-func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt.DebugHandler, stop <-chan struct{}) krt.Collection[securityprofile.Profile] {
+func NewCollection(
+	client kube.Client,
+	regs []filter.Registration,
+	debugger *krt.DebugHandler,
+	stop <-chan struct{},
+) *Collection {
 	opts := krt.NewOptionsBuilder(stop, "epe", debugger)
 	log := ctrllog.Log.WithName("profile")
 
@@ -97,33 +107,69 @@ func NewCollection(client kube.Client, regs []filter.Registration, debugger *krt
 	gspInf.Start(stop)
 	gsps := krt.WrapClient(gspInf, opts.WithName("GlobalSecurityProfiles")...)
 
-	compiledSPs := krt.NewCollection(sps, func(ctx krt.HandlerContext, o *agentsv1alpha1.SecurityProfile) *securityprofile.Profile {
-		sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
-		if err != nil {
-			// Whether anything is still being served for this identity is the
-			// store's knowledge, not this layer's; applyBatch logs that.
-			log.Error(err, "profile failed to compile", "profile", o.Namespace+"/"+o.Name)
-			return securityprofile.InvalidProfile(o, &o.Spec, err)
-		}
-		return sp
-	}, opts.WithName("CompiledSecurityProfiles")...)
+	compiledSPs := krt.NewCollection(
+		sps,
+		func(ctx krt.HandlerContext, o *agentsv1alpha1.SecurityProfile) *securityprofile.Profile {
+			sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
+			if err != nil {
+				// Whether anything is still being served for this identity is the
+				// store's knowledge, not this layer's; applyBatch logs that.
+				log.Error(err, "profile failed to compile", "profile", o.Namespace+"/"+o.Name)
+				return securityprofile.InvalidProfile(o, &o.Spec, err)
+			}
+			return sp
+		},
+		opts.WithName("CompiledSecurityProfiles")...)
 
-	compiledGSPs := krt.NewCollection(gsps, func(ctx krt.HandlerContext, o *agentsv1alpha1.GlobalSecurityProfile) *securityprofile.Profile {
-		sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
-		if err != nil {
-			log.Error(err, "global profile failed to compile", "profile", o.Name)
-			return securityprofile.InvalidProfile(o, &o.Spec, err)
-		}
-		return sp
-	}, opts.WithName("CompiledGlobalSecurityProfiles")...)
+	compiledGSPs := krt.NewCollection(
+		gsps,
+		func(ctx krt.HandlerContext, o *agentsv1alpha1.GlobalSecurityProfile) *securityprofile.Profile {
+			sp, err := compileProfile(o, &o.Spec, regs, ctx, configMaps)
+			if err != nil {
+				log.Error(err, "global profile failed to compile", "profile", o.Name)
+				return securityprofile.InvalidProfile(o, &o.Spec, err)
+			}
+			return sp
+		},
+		opts.WithName("CompiledGlobalSecurityProfiles")...)
+
+	profiles := &Collection{
+		Source: registry.Source[securityprofile.Profile]{Registry: registry.NewSourceRegistry()},
+	}
+	collections := []krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs}
+	if features.SandboxMode {
+		profiles = newSandboxCollection(client, regs, opts, log)
+		collections = append(collections, profiles.Collection)
+	}
 
 	// Debounce on the checked-mode join coalesces event bursts into one
 	// batch per window (KRT_EVENT_DISTRIBUTE_DEBOUNCE[_MAX], default off),
 	// so RegisterCollection's applyBatch rebuilds the snapshot once per
 	// batch instead of once per profile change.
-	return krt.JoinCollection([]krt.Collection[securityprofile.Profile]{compiledSPs, compiledGSPs, newSandboxCollection(client, regs, opts, log)},
+	profiles.Collection = krt.JoinCollection(collections,
 		append(opts.WithName("CompiledProfiles"),
 			krt.WithDebounce(features.KRTDebounceAfter, features.KRTDebounceMax))...)
+	return profiles
+}
+
+// Collection keeps the raw Sandbox source beside its asynchronous projection.
+type Collection struct {
+	// Only Sandbox sources gate first requests; administrator profiles remain asynchronous.
+	registry.Source[securityprofile.Profile]
+	sandbox func(context.Context, subject.Subject) (sandboxSource, bool, error)
+}
+
+// sandboxSource keeps the policy's native key separate from its host Workload.
+type sandboxSource struct {
+	name     types.NamespacedName
+	identity model.SourceIdentity
+}
+
+func sandboxProfileKey(namespace, name string) model.ResourceKey {
+	return model.ResourceKey{
+		TypeURL: model.SecurityProfileType,
+		Name:    securityprofile.MatchSandbox.String() + "/" + namespace + "/" + name,
+	}
 }
 
 func securityProfileRegistration(client kube.Client) kube.InformerRegistration {
@@ -152,9 +198,23 @@ func globalSecurityProfileRegistration(client kube.Client) kube.InformerRegistra
 	}
 }
 
+func sandboxRegistration(client kube.Client) kube.InformerRegistration {
+	resource := client.Metadata().Resource(sandboxGVR)
+	return kube.InformerRegistration{
+		Resource: sandboxGVR,
+		Object:   &metav1.PartialObjectMetadata{},
+		List: func(ctx context.Context, namespace string, options metav1.ListOptions) (runtime.Object, error) {
+			return resource.Namespace(namespace).List(ctx, options)
+		},
+		Watch: func(ctx context.Context, namespace string, options metav1.ListOptions) (watch.Interface, error) {
+			return resource.Namespace(namespace).Watch(ctx, options)
+		},
+	}
+}
+
 // newSandboxCollection watches Sandbox metadata and compiles the objects
 // carrying the agents.kruise.io/security-rules annotation into per-Sandbox
-// per-Pod rule profiles. The informer is metadata-only (PartialObjectMetadata):
+// rule profiles. The informer is metadata-only (PartialObjectMetadata):
 // the compiler never reads spec or status, and a Sandbox carries a full pod
 // template that would otherwise be transferred and cached for every Sandbox
 // in the cluster. It is also delayed, like the profile informers: the Sandbox
@@ -167,43 +227,113 @@ func globalSecurityProfileRegistration(client kube.Client) kube.InformerRegistra
 // so the request path compiles nothing. Failure semantics are also the CRD
 // profile's: a version that fails to compile or project becomes an
 // identity-bearing invalid item, so the store keeps serving the last known
-// good version of that Sandbox's rules when one exists and installs nothing
-// otherwise. The rules are authored at Sandbox creation, so a rejected first
-// version not taking effect is the expected authoring feedback — surfaced by
-// the stale/unenforced metrics under scope=pod rather than by a partially enforced
-// chain. An empty annotation stays a legitimate removal (nil item).
-func newSandboxCollection(client kube.Client, regs []filter.Registration, opts krt.OptionsBuilder, log logr.Logger) krt.Collection[securityprofile.Profile] {
+// good version of that Sandbox UID's rules when one exists and installs nothing
+// otherwise. Requests wait for a usable first version, failing closed when
+// their request budget expires. An empty annotation remains a legitimate removal.
+func newSandboxCollection(
+	client kube.Client,
+	regs []filter.Registration,
+	opts krt.OptionsBuilder,
+	log logr.Logger,
+) *Collection {
 	sandboxResource := client.Metadata().Resource(sandboxGVR)
 	sandboxInf := kclient.NewDelayedInformerFor[*metav1.PartialObjectMetadata](client,
-		kube.InformerRegistration{
-			Resource: sandboxGVR,
-			Object:   &metav1.PartialObjectMetadata{},
-			List: func(ctx context.Context, namespace string, options metav1.ListOptions) (runtime.Object, error) {
-				return sandboxResource.Namespace(namespace).List(ctx, options)
-			},
-			Watch: func(ctx context.Context, namespace string, options metav1.ListOptions) (watch.Interface, error) {
-				return sandboxResource.Namespace(namespace).Watch(ctx, options)
-			},
-		}, kclient.Filter{})
+		sandboxRegistration(client), kclient.Filter{})
 	sandboxInf.Start(opts.Stop())
 	sandboxes := krt.WrapClient(sandboxInf, opts.WithName("Sandboxes")...)
-
-	return krt.NewCollection(sandboxes, func(_ krt.HandlerContext, o *metav1.PartialObjectMetadata) *securityprofile.Profile {
-		if o.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
+	byUID := krt.NewIndex(sandboxes, "sandbox-profile-uids", func(o *metav1.PartialObjectMetadata) []string {
+		uid, found := kruise.SandboxUID(o)
+		if !found {
 			return nil
 		}
-		p, err := securityprofile.NewSandboxProfile(o)
-		if err == nil {
-			err = p.Project(regs)
-		}
-		if err != nil {
-			// Whether an older version is still being served is the store's
-			// knowledge; applyBatch logs and meters that.
-			log.Error(err, "sandbox security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
-			return securityprofile.InvalidSandboxProfile(o, err)
-		}
-		return p
-	}, opts.WithName("CompiledSandboxProfiles")...)
+		return []string{uid}
+	})
+	sources := registry.TrackSources(sandboxes, "sandbox-profile-sources",
+		func(o *metav1.PartialObjectMetadata) []model.ResourceKey {
+			if o.Annotations[securityprofile.AnnotationSecurityRules] == "" {
+				return nil
+			}
+			return []model.ResourceKey{sandboxProfileKey(o.Namespace, o.Name)}
+		},
+		func(o *metav1.PartialObjectMetadata) model.SourceIdentity {
+			return model.SourceIdentity{UID: string(o.UID)}
+		})
+
+	compiled := krt.NewCollection(
+		sandboxes,
+		func(_ krt.HandlerContext, o *metav1.PartialObjectMetadata) *securityprofile.Profile {
+			if o.GetAnnotations()[securityprofile.AnnotationSecurityRules] == "" {
+				return nil
+			}
+			p, err := securityprofile.NewSandboxProfile(o)
+			if err == nil {
+				err = p.Project(regs)
+			}
+			if err != nil {
+				// Whether an older version is still being served is the store's
+				// knowledge; applyBatch logs and meters that.
+				log.Error(err, "sandbox security rules failed to compile", "sandbox", o.Namespace+"/"+o.Name)
+				return securityprofile.InvalidSandboxProfile(o, err)
+			}
+			return p
+		},
+		opts.WithName("CompiledSandboxProfiles")...)
+	return &Collection{
+		Source: registry.Source[securityprofile.Profile]{Collection: compiled, Registry: sources},
+		sandbox: func(ctx context.Context, subject subject.Subject) (sandboxSource, bool, error) {
+			var obj *metav1.PartialObjectMetadata
+			if subject.Sandbox != nil {
+				matches := byUID.Lookup(subject.Sandbox.UID)
+				if len(matches) == 0 {
+					// The UID need not encode a Kubernetes name, and may precede the watch event.
+					objects, err := sandboxResource.Namespace(subject.Workload.Namespace).
+						List(ctx, metav1.ListOptions{})
+					if err != nil {
+						return sandboxSource{}, false, err
+					}
+					for i := range objects.Items {
+						candidate := &objects.Items[i]
+						if uid, found := kruise.SandboxUID(candidate); found && uid == subject.Sandbox.UID {
+							matches = append(matches, candidate)
+						}
+					}
+				}
+				if len(matches) != 1 {
+					return sandboxSource{}, false, fmt.Errorf(
+						"sandbox %q has %d matching sources",
+						subject.Sandbox.UID,
+						len(matches),
+					)
+				}
+				obj = matches[0]
+				if obj.Namespace != subject.Workload.Namespace {
+					return sandboxSource{}, false, fmt.Errorf(
+						"sandbox %q is outside workload namespace %q",
+						subject.Sandbox.UID,
+						subject.Workload.Namespace,
+					)
+				}
+			} else {
+				obj = sandboxInf.Get(subject.Workload.Name, subject.Workload.Namespace)
+				if obj == nil {
+					// Local absence is not authoritative: the request may precede the watch event.
+					var err error
+					obj, err = sandboxResource.Namespace(subject.Workload.Namespace).
+						Get(ctx, subject.Workload.Name, metav1.GetOptions{})
+					if apierrors.IsNotFound(err) {
+						return sandboxSource{}, false, nil
+					}
+					if err != nil {
+						return sandboxSource{}, false, err
+					}
+				}
+			}
+			return sandboxSource{
+				name:     types.NamespacedName{Namespace: obj.Namespace, Name: obj.Name},
+				identity: model.SourceIdentity{UID: string(obj.UID)},
+			}, obj.Annotations[securityprofile.AnnotationSecurityRules] != "", nil
+		},
+	}
 }
 
 func compileProfile(
@@ -223,7 +353,7 @@ func compileProfile(
 	// Static input authoring errors reject the version like any other compile
 	// error. A ConfigMap that is merely absent must not: the profile's rules
 	// install and enforce, only inputs-dependent evaluations fail — otherwise
-	// a missing ConfigMap on first create would leave the pods this profile
+	// a missing ConfigMap on first create would leave the workloads this profile
 	// selects with none of its Block rules in effect.
 	inputs, unavailable, err := resolveInputs(ctx, configMaps, sp.Meta, spec.Inputs)
 	if err != nil {
@@ -269,7 +399,11 @@ func resolveInputs(
 		}
 		key := namespace + "/" + input.ConfigMap.Name
 		if configMaps == nil || ctx == nil {
-			return nil, "", fmt.Errorf("load input %q from ConfigMap %s: ConfigMap collection is not configured", input.Name, key)
+			return nil, "", fmt.Errorf(
+				"load input %q from ConfigMap %s: ConfigMap collection is not configured",
+				input.Name,
+				key,
+			)
 		}
 		configMap := krt.FetchOne(ctx, configMaps, krt.FilterKey(key))
 		if configMap == nil {

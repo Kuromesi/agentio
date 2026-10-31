@@ -36,7 +36,15 @@ AGENTIO_TEST_ENVOY_BINARY=/path/to/envoy go test ./pkg/networking \
 
 Detailed replay scripts, configurations and results are retained on `my-ecs` in `/root/agentio-filter-state-20261031/verify`. Run `PYTHONPATH=vendor python3 verify.py /path/to/envoy` there for the HTTP-origin comparison; `verify_tls_origin.py` additionally enables TLS to the origin. Local evidence is in `/tmp/agentio-filter-state-20261031`.
 
-## Limits
+## Follow-up: sandbox credential metadata
+
+After integrating upstream `953f693a`, the newly introduced sandbox credential state is named `agentio.sandbox.metadata`. Its `X-AGENTIO-SANDBOX-METADATA` input remains unchanged. Capture and TLS relay both use Hashable + ONCE with `skip_if_empty=true`; EPE and both Helm templates use the new state name. Missing metadata retains the existing legacy `sandbox.token` fallback, while present invalid metadata does not fall back.
+
+The replay was extended to seven fields and 24 identity/credential combinations, including changed access tokens, changed client IDs and absent metadata. Envoy 1.39.4 and 1.40.2 each passed the HTTP and TLS-termination paths: 300 serial plus 240 concurrent requests per path, zero state mismatches, and one external origin connection for each 300-request serial run. Each version additionally passed 240 multiplexed HTTP/2 CONNECT requests. Scripts and results are retained at `/root/agentio-sandbox-metadata-review` on `my-ecs`.
+
+Networking, the full EPE suite, compiler/xDS/Store and Helm chart tests passed after integration, along with incremental lint. This is synthetic credential-state replay; it does not claim a live credential-provider authentication test.
+
+## Remaining limits
 
 No Kubernetes rollout or new 24-hour soak. Porter/EPE discovery is not exercised by the synthetic state replay. H2 multiplexing checks use cleartext inner HTTP; TLS state checks use HTTP/1 CONNECT.
 

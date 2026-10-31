@@ -32,7 +32,7 @@ var testLabels = map[string]string{"app": "sandbox"}
 
 func testRequest(path string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "server.example.com", path).
-		Peer("test-ns", "sandbox-pod", testLabels)
+		Workload("test-ns", "sandbox-pod", testLabels)
 }
 
 func blockProfileYAML(name, path string, status int, body string, priority int) string {

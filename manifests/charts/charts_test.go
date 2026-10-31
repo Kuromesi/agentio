@@ -228,7 +228,7 @@ func TestAmbientProfile(t *testing.T) {
 	requireContains(t, manifest,
 		"AMBIENT_ENABLED: \"true\"",
 		"AMBIENT_ENABLEMENT_SELECTOR",
-		"name: ENABLE_SANDBOX_MANAGER",
+		"name: ENABLE_SANDBOX_MANAGER\n              value: \"false\"",
 		"name: INPOD_ENABLED",
 		"path: /var/run/ztunnel",
 	)
@@ -238,26 +238,50 @@ func TestSandboxModePropagation(t *testing.T) {
 	for _, profile := range []string{"sidecar", "ambient"} {
 		for _, mode := range []string{"default", "false", "true"} {
 			t.Run(profile+"/"+mode, func(t *testing.T) {
-				args := []string{"--set", "profile=" + profile}
-				if profile == "ambient" {
-					args = append(args, "--show-only", "templates/ztunnel/daemonset.yaml")
-				}
+				args := []string{"--set", "profile=" + profile, "--set", "epe.mode=managed"}
 				want := "false"
 				if mode != "default" {
-					args = append(args, "--set-string", "agentiod.env.AGENTIO_SANDBOX_MODE="+mode)
+					args = append(args, "--set", "sandbox.enabled="+mode)
 					want = mode
 				}
+				if profile == "ambient" && mode == "true" {
+					requireRenderError(t, "sandbox.enabled is not supported with profile=ambient", args...)
+					return
+				}
 				manifest := renderAgentio(t, args...)
+				if strings.Contains(manifest, "name: AGENTIO_SANDBOX_RUNTIMES") {
+					t.Fatal("chart still emits the removed Sandbox runtimes setting")
+				}
+				// agentiod, managed EPE, and (for ambient) the node ztunnel agree.
+				count := 2
+				if profile == "ambient" {
+					count++
+				}
+				setting := "name: AGENTIO_SANDBOX_MODE\n              value: " + fmt.Sprintf("%q", want)
+				if got := strings.Count(manifest, setting); got != count {
+					t.Fatalf("Sandbox mode settings = %d, want %d", got, count)
+				}
 				if profile == "sidecar" {
 					requireContains(t, manifest, "sandboxMode: "+fmt.Sprintf("%q", want))
-				} else {
-					requireContains(t, manifest,
-						"name: AGENTIO_SANDBOX_MODE\n              value: "+fmt.Sprintf("%q", want),
-					)
 				}
 			})
 		}
 	}
+	for _, name := range []string{"AGENTIO_SANDBOX_MODE", "AGENTIO_SANDBOX_RUNTIMES"} {
+		requireRenderError(t, "managed by sandbox.enabled", "--set-string", "agentiod.env."+name+"=true")
+	}
+	requireRenderError(t, "managed by sandbox.enabled", "--set-string", "epe.env.AGENTIO_SANDBOX_MODE=true")
+	for _, name := range []string{"AGENTIO_SANDBOX_MODE", "ENABLE_SANDBOX_MANAGER"} {
+		requireRenderError(
+			t,
+			"managed by sandbox.enabled",
+			"--set",
+			"profile=ambient",
+			"--set-string",
+			"ztunnel.env."+name+"=true",
+		)
+	}
+	requireRenderError(t, "boolean", "--set-string", "sandbox.enabled=true")
 }
 
 func TestSidecarProfile(t *testing.T) {
@@ -420,6 +444,7 @@ func TestManagedEPE(t *testing.T) {
 	requireContains(t, manifest,
 		"image: \"docker.io/openkruise/agentio-epe:0.1.0\"",
 		"service: agentio-epe.agentio-system.svc.cluster.local",
+		"filter_state['agentio.sandbox.metadata']",
 		"filter_state['agentio.workload.name']",
 		"filter_state['agentio.workload.namespace']",
 		"filter_state['downstream_peer'].name",

@@ -919,6 +919,11 @@ func buildConnectAuthorityFilter(factory, peerPrincipal, localPrincipal string, 
 			filtered = append(filtered, state)
 		}
 		values = filtered
+		// Keep legacy token capture for old ztunnels during rolling upgrades.
+		metadata := value("agentio.sandbox.metadata", "%REQ(X-AGENTIO-SANDBOX-METADATA)%",
+			factory, setstatecommonv3.FilterStateValue_ONCE)
+		metadata.SkipIfEmpty = true
+		values = append(values, metadata)
 		// Read the TLS-verified peer certificate, never a CONNECT header.
 		// Only Porter needs the certificate; do not propagate it to inner streams.
 		values = append(values, value(model.FilterStatePeerCertificate, "%DOWNSTREAM_PEER_CERT%",
@@ -967,7 +972,7 @@ func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *
 	if factory == "envoy.hashable_string" {
 		// TLS termination adds one internal hop; stop sharing again at main_forward.
 		for _, key := range []string{
-			model.FilterStateSandboxID, "sandbox.token",
+			model.FilterStateSandboxID, "sandbox.token", "agentio.sandbox.metadata",
 			model.FilterStateWorkloadName, model.FilterStateWorkloadNamespace,
 			model.FilterStateWorkloadLabels, "sandbox.labels",
 		} {

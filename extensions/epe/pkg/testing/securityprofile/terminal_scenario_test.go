@@ -61,7 +61,7 @@ spec:
 // the app=blocked label, matching blockedAppProfileYAML's selector.
 func blockedPeerRequest(method, host, path string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest(method, host, path).
-		Peer("default", "pod-x", map[string]string{"app": "blocked"})
+		Workload("default", "pod-x", map[string]string{"app": "blocked"})
 }
 
 func TestHandleRequestHeaders_BlockMatched(t *testing.T) {

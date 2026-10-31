@@ -25,9 +25,9 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/block"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	policysecurityprofile "github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/extensions/epe/pkg/wiring"
 )
 
@@ -43,13 +43,19 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 		name  string
 		value string
 	}{{name: "p1", value: "first"}, {name: "p2", value: "second"}} {
-		profile := securityProfile(tc.name, "default", nil, map[string]string{"app": "blocked"}, []v1alpha1.SecurityRule{{
-			Name:  "capture",
-			Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
-			Actions: v1alpha1.SecurityRuleActions{
-				Block: &v1alpha1.BlockAction{StatusCode: 403},
-			},
-		}})
+		profile := securityProfile(
+			tc.name,
+			"default",
+			nil,
+			map[string]string{"app": "blocked"},
+			[]v1alpha1.SecurityRule{{
+				Name:  "capture",
+				Match: []v1alpha1.RuleMatch{{Domains: []string{"*"}}},
+				Actions: v1alpha1.SecurityRuleActions{
+					Block: &v1alpha1.BlockAction{StatusCode: 403},
+				},
+			}},
+		)
 		profile.Spec.Inputs = []v1alpha1.SecurityProfileInput{{
 			Name:   "routing",
 			Inline: map[string]string{"target": tc.value},
@@ -58,7 +64,9 @@ func TestResolverMountsProfileInputsOnUnits(t *testing.T) {
 	}
 	resolution, err := policysecurityprofile.NewResolver(store, regs, nil)(
 		context.Background(),
-		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		subject.Subject{
+			Workload: subject.Workload{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
 	)
 	if err != nil {
@@ -105,7 +113,9 @@ func TestResolverSkipsInitialProfileWithUnresolvedInputs(t *testing.T) {
 
 	resolution, err := policysecurityprofile.NewResolver(store, nil, nil)(
 		context.Background(),
-		inputs.Pod{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		subject.Subject{
+			Workload: subject.Workload{Name: "pod", Namespace: "default", Labels: map[string]string{"app": "blocked"}},
+		},
 		&httpreq.HTTPRequest{Host: "api.example.com", Path: "/", Method: "GET"},
 	)
 	if err != nil {

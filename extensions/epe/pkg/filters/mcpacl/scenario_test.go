@@ -37,7 +37,7 @@ func toolCall(tool string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest("POST", "mcp.example.com", "/mcp").
 		Header("content-type", "application/json").
 		Header("mcp-protocol-version", "2025-11-25").
-		Peer("test-ns", "sandbox-a", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-a", map[string]string{"app": "sandbox"}).
 		Body([]byte(body))
 }
 
@@ -84,5 +84,5 @@ func TestScenario_DeniedToolCallBlockedOnWire(t *testing.T) {
 func TestScenario_NonMCPRequestPassesThrough(t *testing.T) {
 	requireWireUntouched(t, newACLHarness(t).Run(t,
 		enginetest.NewRequest("GET", "mcp.example.com", "/healthz").
-			Peer("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})))
+			Workload("test-ns", "sandbox-a", map[string]string{"app": "sandbox"})))
 }

@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apimachinery/pkg/types"
 	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
@@ -52,7 +52,9 @@ func BenchmarkEgressAuthorization(b *testing.B) {
 						NewAuthorizer(aggregate),
 					).Authorize
 					st := &filter.Stream{
-						Peer:    filter.Peer{Pod: types.NamespacedName{Namespace: "ns", Name: "pod-0"}},
+						Caller: filter.CallerContext{
+							Subject: subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod-0"}},
+						},
 						Request: httpreq.HTTPRequest{Host: "203.0.113.7", Port: 443},
 					}
 					switch mode {

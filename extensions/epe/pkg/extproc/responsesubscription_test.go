@@ -34,6 +34,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 // wantRespFilter declares response-headers demand from the request phase and
@@ -115,12 +116,12 @@ func wantsServer(t *testing.T, regs []filter.Registration, names []string) (*Ser
 		}
 		units = append(units, engine.Unit{
 			ID:    id,
-			Scope: inputs.NewScope(inputs.Request{}, inputs.Pod{}, inputs.Profile{}, inputs.Rule{}, nil),
+			Scope: inputs.NewScope(inputs.Request{}, inputs.Workload{}, inputs.Profile{}, inputs.Rule{}, nil),
 			Cfgs:  cfgs,
 		})
 	}
 	s := NewServer(ServerDeps{
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{Units: units}, nil
 		},
 		Registrations: regs,

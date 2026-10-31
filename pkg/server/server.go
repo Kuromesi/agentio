@@ -21,7 +21,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,7 +30,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
 	securityapi "istio.io/api/security/v1alpha1"
-	"k8s.io/client-go/rest"
 
 	"github.com/openkruise/agentio/pkg/compiler"
 	resolverdns "github.com/openkruise/agentio/pkg/dns/controller"
@@ -42,7 +40,6 @@ import (
 	"github.com/openkruise/agentio/pkg/metrics"
 	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/policystatus"
-	"github.com/openkruise/agentio/pkg/registry"
 	kubernetesregistry "github.com/openkruise/agentio/pkg/registry/kubernetes"
 	"github.com/openkruise/agentio/pkg/security/attestation"
 	"github.com/openkruise/agentio/pkg/security/ca"
@@ -74,16 +71,6 @@ func grpcServerKeepaliveParameters() keepalive.ServerParameters {
 	}
 }
 
-func kubernetesRESTConfig(kubeconfigPath string) (*rest.Config, error) {
-	config, err := kube.LoadConfig(kubeconfigPath)
-	if err != nil {
-		return nil, err
-	}
-	config.QPS = float32(features.KubernetesAPIQPS)
-	config.Burst = features.KubernetesAPIBurst
-	return config, nil
-}
-
 func run(ctx context.Context, options Options, opts ...Option) error {
 	started := time.Now()
 	composition := applyOptions(opts)
@@ -93,10 +80,6 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 	if err := features.Validate(); err != nil {
 		return err
 	}
-	sandboxRuntimes, err := registry.ParseSandboxRuntimes(features.SandboxRuntimes)
-	if err != nil {
-		return fmt.Errorf("AGENTIO_SANDBOX_RUNTIMES: %w", err)
-	}
 	ztunnelAccount, err := trustedNodeServiceAccount(options.RootNamespace, features.ZTunnelAccount)
 	if err != nil {
 		return err
@@ -105,7 +88,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return nil
 	}
 	logStartup(options)
-	config, err := kubernetesRESTConfig(options.Kubeconfig)
+	config, err := kube.LoadConfig(options.Kubeconfig)
 	if err != nil {
 		return err
 	}
@@ -167,7 +150,7 @@ func run(ctx context.Context, options Options, opts ...Option) error {
 		return err
 	}
 	registry, err := kubernetesregistry.New(kubeClient, kubernetesregistry.Options{
-		EnableKruise:          features.SandboxMode && slices.Contains(sandboxRuntimes, registry.SandboxRuntimeKruise),
+		EnableKruise:          features.SandboxMode,
 		ClusterID:             options.ClusterID,
 		TrustDomain:           options.TrustDomain,
 		RootNamespace:         options.RootNamespace,

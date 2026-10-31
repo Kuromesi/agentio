@@ -53,7 +53,7 @@ func (s *fakeSource) CallOAuth2(
 }
 func requestStream(host, path, contentType string) *filter.Stream {
 	return &filter.Stream{
-		Peer: filter.Peer{
+		Caller: filter.CallerContext{
 			Token: &filter.SandboxToken{AccessToken: "trusted-identity", SandboxClientID: "trusted-resource"},
 		},
 		Request: httpreq.HTTPRequest{Host: host,

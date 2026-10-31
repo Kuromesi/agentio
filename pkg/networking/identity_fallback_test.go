@@ -171,7 +171,7 @@ func TestWorkloadStateTLSRelay(t *testing.T) {
 		t.Fatal("unused workload instance must not be relayed")
 	}
 	for _, key := range []string{
-		model.FilterStateSandboxID, "sandbox.token",
+		model.FilterStateSandboxID, "sandbox.token", "agentio.sandbox.metadata",
 		model.FilterStateWorkloadName, model.FilterStateWorkloadNamespace,
 		model.FilterStateWorkloadLabels, "sandbox.labels",
 	} {

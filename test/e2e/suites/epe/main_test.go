@@ -52,6 +52,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "agentgateway EPE e2e is deferred until production peer-attribute integration is available; use the Envoy EPE suite or suites/agentgateway for gateway lifecycle and traffic tests")
 		os.Exit(2)
 	}
+	// The credential-provider fixture needs the sidecar Sandbox Manager.
+	agentioConfig.EnableSandbox = agentioConfig.Profile == agentiocomponent.ProfileSidecar
 	resolvedAgentioConfig = agentioConfig
 
 	suite = e2e.NewSuite(e2e.SuiteSpec{Name: "epe"}, frameworkConfig)

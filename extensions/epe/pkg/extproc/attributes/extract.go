@@ -25,13 +25,13 @@ import (
 
 	extProcPb "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	structpb "google.golang.org/protobuf/types/known/structpb"
-	"k8s.io/apimachinery/pkg/types"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/labels"
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 const (
@@ -41,12 +41,14 @@ const (
 
 	FilterStateDownstreamPeerName      = "filter_state['downstream_peer'].name"
 	FilterStateDownstreamPeerNamespace = "filter_state['downstream_peer'].namespace"
-	// FilterStateWorkloadName carries the source pod name captured on HBONE CONNECT.
+	// FilterStateWorkloadName carries the source workload name captured on HBONE CONNECT.
 	FilterStateWorkloadName = "filter_state['agentio.workload.name']"
-	// FilterStateWorkloadNamespace carries the source pod namespace captured on HBONE CONNECT.
+	// FilterStateWorkloadNamespace carries the source workload namespace captured on HBONE CONNECT.
 	FilterStateWorkloadNamespace = "filter_state['agentio.workload.namespace']"
+	FilterStateWorkloadUID       = "filter_state['agentio.workload.uid']"
+	FilterStateSandboxID         = "filter_state['sandbox.id']"
 	// AttrSourceAddress is Envoy's standard CEL attribute for the
-	// connection peer (the calling Sandbox pod, from the egress gateway's
+	// connection caller (the source workload, from the egress gateway's
 	// perspective). It is delivered as "<ip>:<port>"; only the IP half is
 	// what we want, so callers strip the trailing port. The egress
 	// gateway must list "source.address" in its ext_proc
@@ -54,23 +56,24 @@ const (
 	AttrSourceAddress         = "source.address"
 	FilterStateWorkloadLabels = "filter_state['agentio.workload.labels']"
 	// FilterStateSandboxLabels is the legacy label attribute used during rolling upgrades.
-	FilterStateSandboxLabels = "filter_state['sandbox.labels']"
-	FilterStateSandboxToken  = "filter_state['sandbox.token']"
-	FilterStateRouteUpstream = "filter_state['agentio.route.upstream']"
+	FilterStateSandboxLabels   = "filter_state['sandbox.labels']"
+	FilterStateSandboxToken    = "filter_state['sandbox.token']"
+	FilterStateSandboxMetadata = "filter_state['agentio.sandbox.metadata']"
+	FilterStateRouteUpstream   = "filter_state['agentio.route.upstream']"
 
 	AttrDestinationPort    = "destination.port"
 	AttrDestinationAddress = "destination.address"
 )
 
 // Extract resolves the Envoy ext-proc headers message and its attributes
-// into the per-request Peer (caller identity and credential) and
+// into the per-request CallerContext (caller identity and credential) and
 // httpreq.HTTPRequest. For ordinary requests, the Envoy-authenticated
 // destination.port overrides the authority port so a forged Host cannot evade
 // port policy. CONNECT is the exception: its authority names the tunnel target
 // while destination.port names the explicit proxy, so the target authority
-// port is retained. Missing pod identity returns a partial Peer but still extracts
-// the request target for identity-independent destination authorization.
-// Callers must check Peer.Valid before selecting workload policies.
+// port is retained. Missing identity still preserves the request target for
+// identity-independent destination authorization. Callers check Subject.HasIdentity
+// before resolving policies.
 // Sandbox token decoding is deferred until a credential consumer needs it.
 // Log lines use the logger from ctx, so request-scoped key/values are carried
 // on them.
@@ -78,21 +81,27 @@ func Extract(
 	ctx context.Context,
 	headers *extProcPb.HttpHeaders,
 	attrs map[string]*structpb.Struct,
-) (filter.Peer, httpreq.HTTPRequest) {
+) (filter.CallerContext, httpreq.HTTPRequest) {
 	logger := log.FromContext(ctx)
 	loggerD := logger.V(logging.DEBUG)
 
-	podNamespace := extractFilterStateString(attrs, FilterStateWorkloadNamespace)
-	if podNamespace == "" {
-		podNamespace = extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
+	workloadNamespace := extractFilterStateString(attrs, FilterStateWorkloadNamespace)
+	if workloadNamespace == "" {
+		workloadNamespace = extractFilterStateString(attrs, FilterStateDownstreamPeerNamespace)
 	}
-	podName := extractFilterStateString(attrs, FilterStateWorkloadName)
-	if podName == "" {
-		podName = extractFilterStateString(attrs, FilterStateDownstreamPeerName)
+	workloadName := extractFilterStateString(attrs, FilterStateWorkloadName)
+	if workloadName == "" {
+		workloadName = extractFilterStateString(attrs, FilterStateDownstreamPeerName)
 	}
-	peer := filter.Peer{
-		Pod: types.NamespacedName{Namespace: podNamespace, Name: podName},
-		IP:  extractPodIP(attrs),
+	workload := subject.Workload{
+		UID:       extractFilterStateString(attrs, FilterStateWorkloadUID),
+		Namespace: workloadNamespace,
+		Name:      workloadName,
+		IP:        extractWorkloadIP(attrs),
+	}
+	caller := filter.CallerContext{}
+	if uid := extractFilterStateString(attrs, FilterStateSandboxID); uid != "" {
+		caller.Subject.Sandbox = &subject.Sandbox{UID: uid}
 	}
 	labelsKey := FilterStateWorkloadLabels
 	if _, present := attrs[ExtProcAttrsKey].GetFields()[labelsKey]; !present {
@@ -103,20 +112,25 @@ func Extract(
 	// Workload labels use the new attribute when present, including empty values.
 	// Both attribute names carry the same base64-encoded
 	// "k1=v1,k2=v2" string.
-	podLabels := labels.ParseSandboxLabels(workloadLabelsEncoded)
-	if workloadLabelsEncoded != "" && len(podLabels) == 0 {
+	workloadLabels := labels.ParseSandboxLabels(workloadLabelsEncoded)
+	if workloadLabelsEncoded != "" && len(workloadLabels) == 0 {
 		loggerD.Info("workload labels were present but failed to decode", "attribute", labelsKey)
 	}
 	// Guarded: Go builds the key-value slice at the call site, before Info can
 	// check the level and drop it, so an unguarded line costs an allocation on
 	// every request even with DEBUG off.
 	if loggerD.Enabled() {
-		loggerD.Info("extracted pod info from attributes",
-			"pod", podName, "namespace", podNamespace, "labels", podLabels)
+		loggerD.Info("extracted workload info from attributes",
+			"workload", workloadName, "namespace", workloadNamespace, "labels", workloadLabels)
 	}
-	peer.Labels = podLabels
+	workload.Labels = workloadLabels
+	caller.Subject.Workload = workload
 
-	peer.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
+	if _, present := attrs[ExtProcAttrsKey].GetFields()[FilterStateSandboxMetadata]; present {
+		caller.Token = filter.NewSandboxMetadataToken(extractFilterStateString(attrs, FilterStateSandboxMetadata))
+	} else {
+		caller.Token = filter.NewSandboxToken(extractFilterStateString(attrs, FilterStateSandboxToken))
+	}
 
 	req := parseHTTPRequest(ctx, extractHeaderMap(headers))
 
@@ -137,7 +151,7 @@ func Extract(
 		}
 	}
 
-	return peer, req
+	return caller, req
 }
 
 // destination.address is Envoy's restored downstream local IP:port, not a
@@ -161,10 +175,10 @@ func extractOriginalDestination(attrs map[string]*structpb.Struct) netip.AddrPor
 	return netip.AddrPortFrom(address.Addr().Unmap(), address.Port())
 }
 
-// extractPodIP returns the caller pod IP from Envoy's source.address
+// extractWorkloadIP returns the caller workload IP from Envoy's source.address
 // attribute, delivered as "<ip>:<port>"; only the IP half is returned.
 // Returns an empty string when the attribute is absent or unparseable.
-func extractPodIP(attrs map[string]*structpb.Struct) string {
+func extractWorkloadIP(attrs map[string]*structpb.Struct) string {
 	raw := extractFilterStateString(attrs, AttrSourceAddress)
 	if raw == "" {
 		return ""

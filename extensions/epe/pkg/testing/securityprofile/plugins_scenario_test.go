@@ -267,7 +267,7 @@ func mcpToolPolicy(defaultAction, method, toolName, action string) *v1alpha1.MCP
 // mcpRequest builds an MCP POST to /mcp with a supported protocol version.
 func mcpRequest(host string, body []byte) *enginetest.RequestBuilder {
 	rb := enginetest.NewRequest("POST", host, "/mcp").
-		Peer("default", "pod-x", map[string]string{"app": "blocked"}).
+		Workload("default", "pod-x", map[string]string{"app": "blocked"}).
 		Header("mcp-protocol-version", "2025-11-25")
 	if body != nil {
 		rb.Body(body)

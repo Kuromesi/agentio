@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -446,15 +447,27 @@ func TestInjectSandboxMode(t *testing.T) {
 				webhook := newTestWebhookWithValues(t, NativeSidecarModeDisabled, config, custom)
 				pod := injectTestPod(t, webhook, testPod())
 				proxy := FindContainer("agentio-proxy", pod.Spec.Containers)
+				enabled := want == "true"
+				if mounted := slices.Contains(proxy.VolumeMounts, corev1.VolumeMount{
+					Name:      "agentio-sandbox-state",
+					MountPath: "/var/lib/ztunnel/sandbox",
+				}); mounted != enabled {
+					t.Fatalf("Sandbox state mounted = %v, want %v", mounted, enabled)
+				}
+				if present := slices.ContainsFunc(pod.Spec.Volumes, func(v corev1.Volume) bool {
+					return v.Name == "agentio-sandbox-state" && v.EmptyDir != nil
+				}); present != enabled {
+					t.Fatalf("Sandbox state emptyDir present = %v, want %v", present, enabled)
+				}
+				settings := map[string]string{}
 				for _, env := range proxy.Env {
-					if env.Name == "AGENTIO_SANDBOX_MODE" {
-						if env.Value != want {
-							t.Fatalf("sandbox mode = %q, want %q", env.Value, want)
-						}
-						return
+					settings[env.Name] = env.Value
+				}
+				for _, name := range []string{"AGENTIO_SANDBOX_MODE", "ENABLE_SANDBOX_MANAGER"} {
+					if settings[name] != want {
+						t.Fatalf("%s = %q, want %q", name, settings[name], want)
 					}
 				}
-				t.Fatal("injected ztunnel has no Sandbox mode setting")
 			})
 		}
 	}

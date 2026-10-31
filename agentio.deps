@@ -4,7 +4,7 @@
     "name": "ZTUNNEL_REPO_SHA",
     "repoName": "openkruise/ztunnel",
     "file": "",
-    "lastStableSHA": "f4e7257075c7eb4d1c45abb4b9a20e549516a6d3"
+    "lastStableSHA": "0527e82c6a5ecf16a12de5c38016154e2590a0ed"
   },
   {
     "_comment": "Immutable digest of the multi-architecture CNI image.",

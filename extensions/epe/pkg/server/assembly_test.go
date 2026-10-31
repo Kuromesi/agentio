@@ -122,7 +122,7 @@ spec:
 	run := func(path string) *enginetest.Verdict {
 		t.Helper()
 		msgs := enginetest.NewRequest("GET", "server.example.com", path).
-			Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+			Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 			Build()
 
 		var responses []*extProcPb.ProcessingResponse

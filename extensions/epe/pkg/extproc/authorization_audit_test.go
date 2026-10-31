@@ -34,7 +34,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
@@ -54,7 +54,7 @@ func TestAuthorizationDenialHasCorrelatedJSONResponse(t *testing.T) {
 	server := NewServer(
 		ServerDeps{
 			AuditLogger: audit,
-			Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+			Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 				return engine.Resolution{}, nil
 			},
 			AuthorizeRequest: egressauthz.NewAggregate(client, cfg).Authorize,
@@ -113,7 +113,7 @@ func TestAuthorizationDenialHasCorrelatedJSONResponse(t *testing.T) {
 func TestAuthorizationFailureResponseDoesNotExposeInternalError(t *testing.T) {
 	audit := &capturedAuditLogger{}
 	server := NewServer(ServerDeps{AuditLogger: audit,
-		Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+		Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 			return engine.Resolution{}, nil
 		},
 		AuthorizeRequest: func(context.Context, *filter.Stream) (*filter.UpstreamTarget, *filter.Reply, error) {
@@ -251,7 +251,7 @@ func TestAuthorizationPreservesOutcome(t *testing.T) {
 			server := NewServer(ServerDeps{
 				AuditLogger:   audit,
 				Registrations: tc.regs,
-				Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+				Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 					return engine.Resolution{Units: units}, nil
 				},
 				AuthorizeRequest: egressauthz.NewAggregate(dns.NewClient(nil, time.Second)).Authorize,
@@ -326,7 +326,7 @@ func TestAuthorizationOutcomeWithSendFailure(t *testing.T) {
 				server := NewServer(ServerDeps{
 					AuditLogger:   audit,
 					Registrations: []filter.Registration{fixedRegHeaders("bypass", filter.Bypass())},
-					Resolve: func(context.Context, inputs.Pod, *httpreq.HTTPRequest) (engine.Resolution, error) {
+					Resolve: func(context.Context, subject.Subject, *httpreq.HTTPRequest) (engine.Resolution, error) {
 						return engine.Resolution{Units: []engine.Unit{{Cfgs: []any{struct{}{}}}}}, nil
 					},
 					AuthorizeRequest: tc.authorize,

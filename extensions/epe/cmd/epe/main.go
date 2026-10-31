@@ -122,7 +122,7 @@ var (
 		false, "Skip TLS certificate verification for all HTTPS audit webhook targets; "+
 			"enabling this disables server identity verification and is unsafe")
 	failClosedOnMissingIdentity = flag.Bool("fail-closed-on-missing-identity", false,
-		"Deny requests when the source pod identity is missing from filter_state "+
+		"Deny requests when the caller Workload/Sandbox identity is missing from filter_state "+
 			"(e.g. a misconfigured metadata exchange); by default global destination authorization still runs")
 	tlsSource = flag.String("tls-source", "none", "Serving certificate source: none, ca or file")
 	caAddress = flag.String(
@@ -190,6 +190,7 @@ func run() error {
 	if printEnv.Enabled {
 		return printEnv.Write(os.Stdout, envdoc.Options{
 			Prefixes: []string{
+				"AGENTIO_KUBERNETES_API_",
 				"IDENTITY_PROVIDER_",
 				"TOKEN_CACHE_",
 				"STS_CACHE_",
@@ -311,12 +312,14 @@ func run() error {
 	// Create the in-memory config store, materialized from one joined krt
 	// collection of compiled SecurityProfile / GlobalSecurityProfile objects
 	// and per-Sandbox rule profiles (agents.kruise.io/security-rules
-	// annotation, looked up by verified pod identity and evaluated after the
+	// annotation, looked up by Sandbox identity and evaluated after the
 	// selector-matched profiles). Registration replays current collection
 	// state and then applies every event batch.
 	store := profilestore.NewStore()
 	profiles := profilestore.NewCollection(client, registrations, nil, ctx.Done())
 	profileReg := store.RegisterCollection(profiles)
+	unregisterSandboxDeletes := profiles.Registry.RegisterDeletes(store.NotifyKeys)
+	defer unregisterSandboxDeletes()
 
 	// Liveness remains healthy during CA outages. Readiness follows certificate
 	// validity independently, allowing an expired identity to recover in place.
@@ -466,7 +469,7 @@ func initLogging(opts *zap.Options) uberzap.AtomicLevel {
 	// handlers report broken streams, unreadable bodies and failed credential
 	// fetches through Error, and those are conditions a client or a policy
 	// produced, not defects in this binary: the stack names a fixed, known line,
-	// while the fields that identify the request — requestID, pod, rule — are
+	// while the fields that identify the request — requestID, workload, sandbox, rule — are
 	// already on the line. Such a condition repeats once per request, so a stack
 	// turns one log line into dozens at request rate.
 	//

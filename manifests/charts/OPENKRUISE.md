@@ -50,6 +50,8 @@ Enable Agentio in the sandbox-manager release values:
 ```yaml
 agentio:
   enabled: true
+  sandbox:
+    enabled: true
   global:
     namespace: sandbox-system
     createNamespace: true
@@ -69,8 +71,16 @@ Static gateway mode works without injector configuration. Explicitly selecting `
 
 Configure the sandbox-controller release separately when changing bootstrap settings in the manager:
 
+Set `agentio.sandbox.enabled: true` in **both** releases to enable Sandbox
+support. It defaults to `false` in both bundles. The manager enables Kruise
+Sandbox discovery and managed EPE's Sandbox rules; the controller enables the
+traffic proxy's Sandbox Manager and registration volume. These are separate
+Helm releases, so a manager upgrade cannot update the controller's values.
+Recreate existing Sandbox Pods to pick up changed injection settings.
+
 | sandbox-manager value | sandbox-controller value |
 | --- | --- |
+| `agentio.sandbox.enabled` | `agentio.sandbox.enabled` |
 | `agentio.global.namespace` | `agentio.trafficProxy.controlPlaneNamespace` |
 | `agentio.agentiod.fullnameOverride` | `agentio.trafficProxy.controlPlaneService` |
 | `agentio.global.clusterDomain` | `agentio.trafficProxy.clusterDomain` |

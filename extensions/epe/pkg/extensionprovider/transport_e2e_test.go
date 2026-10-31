@@ -41,6 +41,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/httpcallout"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 	fixture "github.com/openkruise/agentio/test/fixtures/httpcallout"
 )
 
@@ -147,10 +148,10 @@ func TestHTTPCalloutTransportE2E(t *testing.T) {
 		extproc.ServerDeps{
 			Registrations:               regs,
 			FailClosedOnMissingIdentity: true,
-			Resolve: func(_ context.Context, pod inputs.Pod, req *httpreq.HTTPRequest) (engine.Resolution, error) {
+			Resolve: func(_ context.Context, subj subject.Subject, req *httpreq.HTTPRequest) (engine.Resolution, error) {
 				scope := inputs.NewScope(
 					inputs.RequestFrom(*req),
-					pod,
+					inputs.WorkloadFromSubject(subj),
 					inputs.Profile{Name: "transport", Namespace: "default"},
 					inputs.Rule{Name: "callout"},
 					nil,

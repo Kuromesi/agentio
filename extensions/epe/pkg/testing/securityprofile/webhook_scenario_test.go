@@ -73,7 +73,7 @@ spec:
 // selects.
 func auditedRequest(path string) *enginetest.RequestBuilder {
 	return enginetest.NewRequest("GET", "server.example.com", path).
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"})
 }
 
 func newWebhookAuditHarness(t *testing.T, mode enginetest.AuditMode) (*Harness, *enginetest.AuditReceiver) {

@@ -1,5 +1,7 @@
 # BEGIN GENERATED AGENTIO TRAFFIC PROXY VALUES - DO NOT EDIT
 agentio:
+  sandbox:
+    enabled: false
   trafficProxy:
     caAddress: ""
     caCertConfigMap: agentio-ca-root-cert

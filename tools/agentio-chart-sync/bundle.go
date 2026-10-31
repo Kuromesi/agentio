@@ -232,6 +232,9 @@ type chartImageValues struct {
 }
 
 type sandboxControllerSourceValues struct {
+	Sandbox struct {
+		Enabled bool `json:"enabled"`
+	} `json:"sandbox"`
 	Global struct {
 		Hub             string `json:"hub"`
 		Tag             string `json:"tag"`
@@ -403,6 +406,7 @@ func generatedSandboxControllerValuesBlock(content []byte) ([]byte, error) {
 
 	generated := map[string]any{
 		"agentio": map[string]any{
+			"sandbox": map[string]any{"enabled": values.Sandbox.Enabled},
 			"trafficProxy": map[string]any{
 				"controlPlaneNamespace":   "sandbox-system",
 				"controlPlaneService":     service,
@@ -812,6 +816,7 @@ func prepareSandboxManagerTemplate(rel string, content []byte) ([]byte, error) {
 		}
 	}
 	removeBlock(`{{- if eq .Values.profile "sidecar" }}`)
+	removeBlock(`{{- if eq .Values.profile "ambient" }}`)
 	content = bytes.ReplaceAll(content, []byte(`or (eq .Values.profile "sidecar") (eq .Values.egressGateway.mode "gatewayAPI")`), []byte(`eq .Values.egressGateway.mode "gatewayAPI"`))
 	content = bytes.ReplaceAll(content, []byte(`(eq .Values.profile "sidecar")`), []byte("false"))
 	content = bytes.ReplaceAll(content, []byte(`eq .Values.profile "sidecar"`), []byte("false"))

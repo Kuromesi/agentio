@@ -33,7 +33,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine/filter"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extproc/attributes"
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
-	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/logging"
 )
 
@@ -49,12 +48,6 @@ const (
 	requestBodyMode = extProcV3.ProcessingMode_BUFFERED
 	// responseBodyMode has the same constraint in the response direction.
 	responseBodyMode = extProcV3.ProcessingMode_BUFFERED
-
-	connectRequestBodyUnsupportedDetails  = "epe_connect_request_body_unsupported"
-	connectResponseBodyUnsupportedDetails = "epe_connect_response_body_unsupported"
-	connectBodyUnsupportedStatus          = 500
-	missingIdentityDetails                = "epe_missing_source_identity"
-	missingIdentityStatus                 = 403
 )
 
 // HandleRequestHeaders resolves the caller identity, matches profiles into
@@ -88,41 +81,33 @@ func (s *Server) HandleRequestHeaders(
 	st.RequestID = requestID
 	state.markRequestSeen()
 
-	peer, req := attributes.Extract(ctx, headers, attrs)
-	st.Peer = peer
+	caller, req := attributes.Extract(ctx, headers, attrs)
+	st.Caller = caller
 	st.Request = req
 	target, err := attributes.ExtractUpstream(attrs)
 	if err != nil {
-		return []*extProcPb.ProcessingResponse{immediateFromReply(filter.Reply{
-			Status:  500,
-			Details: "epe_invalid_route_upstream",
-		})}, nil
+		return invalidRouteUpstreamDeny, nil
 	}
 	st.Upstream = target
 	isConnect := strings.EqualFold(req.Method, "CONNECT")
 
-	if !peer.Valid() {
+	if !caller.Subject.HasIdentity() {
 		// Static destination authorization does not require a workload identity.
 		// Authorizers enforce their own identity requirements unless the caller
 		// explicitly requires identity at the request boundary.
-		logger.V(logging.DEFAULT).Info("pod identity missing from filter_state",
-			"podNamespace", peer.Pod.Namespace, "podName", peer.Pod.Name,
+		logger.V(logging.DEFAULT).Info("subject identity missing from filter_state",
+			"workload", caller.Subject.Workload.String(), "sandbox", caller.Subject.Sandbox.String(),
 			"failClosed", s.failClosedOnMissingIdentity)
 		if s.failClosedOnMissingIdentity {
 			return missingIdentityDeny, nil
 		}
 	}
 
-	// Resolve identity-dependent profiles only when a source pod is known.
+	// Resolve identity-dependent profiles only when a source identity is known.
 	// Empty resolution still passes through the independent authorizer below.
 	var res engine.Resolution
-	if peer.Valid() {
-		res, err = s.resolve(ctx, inputs.Pod{
-			Name:      peer.Pod.Name,
-			Namespace: peer.Pod.Namespace,
-			IP:        peer.IP,
-			Labels:    peer.Labels,
-		}, &req)
+	if caller.Subject.HasIdentity() {
+		res, err = s.resolve(ctx, caller.Subject, &req)
 	}
 	// Installed before the error is honoured: a resolver that fails may still
 	// have matched rules worth recording, and finishStream promotes the error
@@ -133,22 +118,23 @@ func (s *Server) HandleRequestHeaders(
 		state.streamLogger = res.StreamLogger
 	}
 	if err != nil {
-		return nil, err
+		// A policy lookup failure must not become an ext_proc transport fail-open.
+		return policyUnavailableDeny, err
 	}
 
-	// Single DEBUG summary line per request — pod identity, request
+	// Single DEBUG summary line per request — subject identity, request
 	// identity, and resolved unit count.
 	if loggerV := logger.V(logging.DEBUG); loggerV.Enabled() {
 		loggerV.Info("handling request",
-			"pod", peer.Pod.Name, "namespace", peer.Pod.Namespace,
+			"workload", caller.Subject.Workload.String(), "sandbox", caller.Subject.Sandbox.String(),
 			"method", req.Method, "host", req.Host, "port", req.Port, "path", req.Path,
 			"units", len(res.Units))
 	}
 
 	if len(res.Units) == 0 && s.authorizeRequest == nil {
 		if loggerD.Enabled() {
-			loggerD.Info("no policy applies to this pod",
-				"pod", peer.Pod.Name, "namespace", peer.Pod.Namespace, "labels", peer.Labels)
+			loggerD.Info("no policy applies to this subject",
+				"workload", caller.Subject.Workload.String(), "sandbox", caller.Subject.Sandbox.String())
 		}
 		return defaultPassThrough, nil
 	}
@@ -174,10 +160,7 @@ func (s *Server) HandleRequestHeaders(
 	// would silently claim the policy ran against the tunnel payload.
 	if isConnect && reqHeadersRes.NeedsBody() {
 		reqHeadersRes.Disposition = engine.DispositionBlocked
-		reqHeadersRes.Reply = filter.Reply{
-			Status:  connectBodyUnsupportedStatus,
-			Details: connectRequestBodyUnsupportedDetails,
-		}
+		reqHeadersRes.Reply = connectRequestBodyUnsupportedReply
 	}
 	// A bypass in this walk bounds the response-phase dispatch;
 	// HandleRequestBody records the asynchronous case.
@@ -215,7 +198,7 @@ func (s *Server) requestHeadersResponse(
 		reqHeadersRes = bodyResult.HeadersResult()
 	}
 	state.responseScope = reqHeadersRes.ResponseScope
-	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, state.stream.Peer)
+	responses := translateRequestHeadersResult(reqHeadersRes, loggerD, state.stream.Caller)
 
 	// ModeOverride must restate both body modes because Envoy copies them
 	// unconditionally. A blocked result must not carry an override.
@@ -312,10 +295,7 @@ func (s *Server) HandleResponseHeaders(
 	// whether Envoy happened to mark a bodyless response end-of-stream.
 	if isConnect && respHeadersRes.NeedsBody() {
 		respHeadersRes.Disposition = engine.DispositionBlocked
-		respHeadersRes.Reply = filter.Reply{
-			Status:  connectBodyUnsupportedStatus,
-			Details: connectResponseBodyUnsupportedDetails,
-		}
+		respHeadersRes.Reply = connectResponseBodyUnsupportedReply
 	}
 	state.awaitResponseHeaders = false
 	responses := translateResponseHeadersResult(respHeadersRes)
@@ -360,34 +340,12 @@ func extractRequestID(headers *extProcPb.HttpHeaders) string {
 	return ""
 }
 
-// defaultPassThrough is the shared passthrough response returned when no
-// filter produces mutations. It is immutable and safe to share across
-// goroutines — gRPC serializes but does not mutate the proto.
-var defaultPassThrough = []*extProcPb.ProcessingResponse{
-	{Response: &extProcPb.ProcessingResponse_RequestHeaders{
-		RequestHeaders: &extProcPb.HeadersResponse{},
-	}},
-}
-
-// missingIdentityDeny is the fail-closed reply for a request whose source pod
-// identity never reached the filter. Like defaultPassThrough it is immutable
-// and shared across goroutines.
-var missingIdentityDeny = []*extProcPb.ProcessingResponse{
-	immediateFromReply(filter.Reply{Status: missingIdentityStatus, Details: missingIdentityDetails}),
-}
-
 // HandleRequestTrailers returns an empty pass-through response.
 func (s *Server) HandleRequestTrailers(
 	ctx context.Context,
 	trailers *extProcPb.HttpTrailers,
 ) ([]*extProcPb.ProcessingResponse, error) {
-	return []*extProcPb.ProcessingResponse{
-		{
-			Response: &extProcPb.ProcessingResponse_RequestTrailers{
-				RequestTrailers: &extProcPb.TrailersResponse{},
-			},
-		},
-	}, nil
+	return emptyRequestTrailersAck, nil
 }
 
 // HandleResponseTrailers returns an empty pass-through response.
@@ -395,11 +353,5 @@ func (s *Server) HandleResponseTrailers(
 	ctx context.Context,
 	trailers *extProcPb.HttpTrailers,
 ) ([]*extProcPb.ProcessingResponse, error) {
-	return []*extProcPb.ProcessingResponse{
-		{
-			Response: &extProcPb.ProcessingResponse_ResponseTrailers{
-				ResponseTrailers: &extProcPb.TrailersResponse{},
-			},
-		},
-	}, nil
+	return emptyResponseTrailersAck, nil
 }

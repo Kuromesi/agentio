@@ -65,7 +65,7 @@ func TestScenario_WhitelistFromCRDYAML(t *testing.T) {
 	request := func(tool string) *enginetest.RequestBuilder {
 		body := fmt.Sprintf(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":%q}}`, tool)
 		return enginetest.NewRequest("POST", "server.example.com", "/mcp").
-			Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+			Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 			Header("content-type", "application/json").
 			Header("mcp-protocol-version", "2025-11-25").
 			Body([]byte(body))
@@ -92,7 +92,7 @@ func TestScenario_BodylessMCPRequestIsStillAudited(t *testing.T) {
 	// No .Body() call, so HeadersMsg sets EndOfStream=true
 	// (enginetest/request.go:181) and Build emits only the headers message.
 	verdict := h.Run(t, enginetest.NewRequest("POST", "server.example.com", "/mcp").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("content-type", "application/json"))
 
 	if len(verdict.AccessLog) != 1 {
@@ -111,7 +111,7 @@ func TestScenario_BodyPhaseDenyAuditsExactlyOnce(t *testing.T) {
 
 	body := `{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"unlisted-tool"}}`
 	verdict := h.Run(t, enginetest.NewRequest("POST", "server.example.com", "/mcp").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("content-type", "application/json").
 		Body([]byte(body)))
 
@@ -140,7 +140,7 @@ func TestScenario_StreamingHeadersWithoutBodyIsStillAudited(t *testing.T) {
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
 	verdict := h.Run(t, enginetest.NewRequest("POST", "server.example.com", "/mcp").
-		Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+		Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 		Header("content-type", "application/json").
 		StreamingHeaders())
 
@@ -161,7 +161,7 @@ func TestScenario_ChunkedBodyDelivery(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"unlisted-tool"}}`
 	for _, cut := range []int{1, 25, len(body) - 1} {
 		verdict := h.Run(t, enginetest.NewRequest("POST", "server.example.com", "/mcp").
-			Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+			Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 			Header("mcp-protocol-version", "2025-11-25").
 			BodyChunks([]byte(body[:cut]), []byte(body[cut:])))
 		verdict.RequireBlockedBody(t, 451, "denied-by-mcp-whitelist")
@@ -177,22 +177,22 @@ func TestScenario_GAFastPath(t *testing.T) {
 	h := New(t, Options{})
 	h.Fixture.ApplyYAML(mcpPolicyYAML)
 
-	peer := func() *enginetest.RequestBuilder {
+	caller := func() *enginetest.RequestBuilder {
 		return enginetest.NewRequest("POST", "server.example.com", "/mcp").
-			Peer("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
+			Workload("test-ns", "sandbox-pod", map[string]string{"app": "sandbox"}).
 			Header("content-type", "application/json").
 			Header("mcp-protocol-version", "2026-07-28")
 	}
 
 	// Denied tool: fast-path deny from headers alone — body never processed.
-	denied := h.Run(t, peer().
+	denied := h.Run(t, caller().
 		Header("mcp-method", "tools/call").
 		Header("mcp-name", "evil").
 		Body([]byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"evil"}}`)))
 	denied.RequireBlockedBody(t, 451, "denied-by-mcp-whitelist")
 
 	// Allowed tool: fast-path NeedBody, then body confirms the allow.
-	allowed := h.Run(t, peer().
+	allowed := h.Run(t, caller().
 		Header("mcp-method", "tools/call").
 		Header("mcp-name", "allowed-tool").
 		Body([]byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"allowed-tool"}}`)))
@@ -204,7 +204,7 @@ func TestScenario_GAFastPath(t *testing.T) {
 	}
 
 	// Non-governed method: fast-path Continue, no body buffering needed.
-	nonGoverned := h.Run(t, peer().
+	nonGoverned := h.Run(t, caller().
 		Header("mcp-method", "tools/list").
 		Body([]byte(`{"jsonrpc":"2.0","id":"1","method":"tools/list"}`)))
 	if nonGoverned.Kind == enginetest.VerdictBlocked {

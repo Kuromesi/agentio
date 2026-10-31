@@ -143,7 +143,7 @@ spec:
 	deny := []byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"denied-tool"}}`)
 	enginetest.DeliverySweep(t, deny, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
 		h.Run(t, withBody(enginetest.NewRequest("POST", "server.example.com", "/mcp").
-			Peer("test-ns", "sandbox-pod", testLabels).
+			Workload("test-ns", "sandbox-pod", testLabels).
 			Header("mcp-protocol-version", "2025-11-25"))).
 			RequireBlockedBody(t, 452, "denied-sweep")
 	})
@@ -151,7 +151,7 @@ spec:
 	allow := []byte(`{"jsonrpc":"2.0","id":"1","method":"tools/call","params":{"name":"allowed-tool"}}`)
 	enginetest.DeliverySweep(t, allow, func(t *testing.T, withBody func(*enginetest.RequestBuilder) *enginetest.RequestBuilder) {
 		verdict := h.Run(t, withBody(enginetest.NewRequest("POST", "server.example.com", "/mcp").
-			Peer("test-ns", "sandbox-pod", testLabels).
+			Workload("test-ns", "sandbox-pod", testLabels).
 			Header("mcp-protocol-version", "2025-11-25")))
 		if verdict.Kind == enginetest.VerdictBlocked {
 			t.Fatalf("allowed tool blocked in this delivery shape: %+v", verdict)

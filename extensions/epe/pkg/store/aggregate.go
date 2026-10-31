@@ -19,6 +19,8 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+
+	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
 )
 
 type backendView = Batch
@@ -83,7 +85,7 @@ func (a *Aggregate) Get(key Key) (*Resource, error) { return a.Snapshot().Get(ke
 func (a *Aggregate) List(typ Type) ([]Resource, error) { return a.Snapshot().List(typ) }
 
 // ResourcesFor selects resources using a resource-specific immutable index.
-func (a *Aggregate) ResourcesFor(typ Type, subject Subject) ([]Resource, error) {
+func (a *Aggregate) ResourcesFor(typ Type, subject subject.Subject) ([]Resource, error) {
 	return a.Snapshot().ResourcesFor(typ, subject)
 }
 

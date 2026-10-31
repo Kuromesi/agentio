@@ -41,18 +41,17 @@ func TestDefaultOptionsContainsOnlyProcessWiring(t *testing.T) {
 	}
 }
 
-func TestSandboxRuntimesValidatedBeforeKubernetes(t *testing.T) {
-	original := features.SandboxRuntimes
-	t.Cleanup(func() { features.SandboxRuntimes = original })
-	features.SandboxRuntimes = "kruise,unknown"
-	options := DefaultOptions()
-	options.Kubeconfig = "/does/not/exist"
-	if err := run(
-		t.Context(),
-		options,
-	); err == nil ||
-		!strings.Contains(err.Error(), "AGENTIO_SANDBOX_RUNTIMES: unsupported sandbox runtime") {
-		t.Fatalf("run() error = %v, want runtime configuration error before loading Kubernetes config", err)
+func TestRemovedSandboxRuntimesRejectedBeforeKubernetes(t *testing.T) {
+	for _, value := range []string{"", "kruise"} {
+		t.Run(value, func(t *testing.T) {
+			t.Setenv("AGENTIO_SANDBOX_RUNTIMES", value)
+			options := DefaultOptions()
+			options.Kubeconfig = "/does/not/exist"
+			if err := run(t.Context(), options); err == nil ||
+				!strings.Contains(err.Error(), "AGENTIO_SANDBOX_RUNTIMES is no longer supported") {
+				t.Fatalf("run() error = %v, want migration error before loading Kubernetes config", err)
+			}
+		})
 	}
 }
 
@@ -196,6 +195,7 @@ func TestPrintEnvironmentListsRegisteredVariables(t *testing.T) {
 	}
 	body := out.String()
 	for _, variable := range []string{
+		"AGENTIO_SANDBOX_MODE",
 		"AGENTIO_TOKEN_AUDIENCE",
 		"ENABLE_POLICY_STATUS",
 		"AGENTIO_SCOPED_SECRETS",
@@ -225,6 +225,7 @@ func TestPrintEnvironmentListsRegisteredVariables(t *testing.T) {
 		t.Fatalf("environment help contains a removed Pilot dependency:\n%s", body)
 	}
 	for _, removed := range []string{
+		"AGENTIO_SANDBOX_RUNTIMES",
 		"CA_TRUSTED_NODE_ACCOUNTS",
 		"ENABLE_DEBUG_ON_HTTP",
 		"ENABLE_SNI_TRAFFIC_POLICY",

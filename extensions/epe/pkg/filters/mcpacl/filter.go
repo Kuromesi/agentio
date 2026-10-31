@@ -179,7 +179,7 @@ func (f *Filter) OnRequestHeaders(ctx context.Context, st *filter.Stream) (filte
 				if decision := evaluate(rc.Cfg, method, toolName); decision != actionAllow {
 					log.FromContext(ctx).Info("MCP tool denied by header fast-path",
 						"rule", rc.ID.Name, "method", method, "toolName", toolName,
-						"decision", decision, "pod", st.Peer.Pod.String())
+						"decision", decision, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 					return filter.Stop(denyReply(rc.Cfg)), nil
 				}
 				// Allow: fall through to NeedBody for header/body verification.
@@ -207,7 +207,7 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 		log.FromContext(ctx).Info("MCP request body is not a readable single JSON-RPC message, applying defaultAction",
 			"rule", rc.ID.Name,
 			"defaultAction", rc.Cfg.DefaultAction,
-			"pod", st.Peer.Pod.String())
+			"workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return applyDefaultAction(rc.Cfg), nil
 	}
 
@@ -227,11 +227,11 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 	if !supportedMCPVersions[version] {
 		if cfg.UnsupportedVersionAction == actionPassthrough {
 			log.FromContext(ctx).Info("MCP tool call with unsupported/absent protocol version, passing through per policy",
-				"rule", rc.ID.Name, "version", version, "pod", st.Peer.Pod.String())
+				"rule", rc.ID.Name, "version", version, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 			return filter.Continue(), nil
 		}
 		log.FromContext(ctx).Info("MCP tool call with unsupported/absent protocol version, denying",
-			"rule", rc.ID.Name, "version", version, "pod", st.Peer.Pod.String())
+			"rule", rc.ID.Name, "version", version, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return filter.Stop(denyReply(cfg)), nil
 	}
 
@@ -263,7 +263,7 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 				"rule", rc.ID.Name,
 				"headerMethod", hMethod, "bodyMethod", method,
 				"headerTool", hName, "bodyTool", toolName,
-				"pod", st.Peer.Pod.String())
+				"workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		}
 		// Fall through to body-based evaluation.
 	}
@@ -274,14 +274,14 @@ func (f *Filter) OnRequestBody(ctx context.Context, st *filter.Stream, body filt
 	if !read.hasTool {
 		log.FromContext(ctx).Info("MCP tool call without a readable tool name, applying defaultAction",
 			"rule", rc.ID.Name, "method", method,
-			"defaultAction", cfg.DefaultAction, "pod", st.Peer.Pod.String())
+			"defaultAction", cfg.DefaultAction, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return applyDefaultAction(cfg), nil
 	}
 
 	if decision := evaluate(cfg, method, toolName); decision != actionAllow {
 		log.FromContext(ctx).Info("MCP tool denied by policy",
 			"rule", rc.ID.Name, "method", method, "toolName", toolName,
-			"decision", decision, "pod", st.Peer.Pod.String())
+			"decision", decision, "workload", st.Caller.Subject.Workload.String(), "sandbox", st.Caller.Subject.Sandbox.String())
 		return filter.Stop(denyReply(cfg)), nil
 	}
 	return filter.Continue(), nil
