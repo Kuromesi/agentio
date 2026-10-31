@@ -1071,8 +1071,8 @@ func TestSandboxHeaderFilterState(t *testing.T) {
 		if !state.GetFormatString().GetOmitEmptyValues() {
 			t.Errorf("%s must preserve missing headers as empty values", key)
 		}
-		if state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_TRANSITIVE {
-			t.Errorf("%s must survive every internal HTTP/TLS hop", key)
+		if state.GetSharedWithUpstream() != setstatecommonv3.FilterStateValue_ONCE {
+			t.Errorf("%s must be shared only with the next internal hop", key)
 		}
 		if state.GetFactoryKey() != "envoy.hashable_string" {
 			t.Errorf("%s must distinguish upstream pools", key)
