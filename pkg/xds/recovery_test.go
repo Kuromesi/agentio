@@ -16,6 +16,7 @@ package xds
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 
 	"github.com/openkruise/agentio/pkg/model"
+	xdsstore "github.com/openkruise/agentio/pkg/xds/store"
 )
 
 func TestGatewayNACKRecoveryIncludesUnacceptedUpdatesAndRemovals(t *testing.T) {
@@ -36,7 +38,11 @@ func TestGatewayNACKRecoveryIncludesUnacceptedUpdatesAndRemovals(t *testing.T) {
 			b := gatewayResourceOfType(t, model.RouteType, "demo/egress", "b", "initial")
 			c := gatewayResourceOfType(t, model.RouteType, "demo/egress", "c", "initial")
 			d := gatewayResourceOfType(t, model.RouteType, "demo/egress", "d", "initial")
-			server := newTestServer(t, gatewayScope(), []model.Resource{a, b, c, d}, nil)
+			other := gatewayResourceOfType(t, model.RouteType, "demo/other", "a", "initial")
+			sibling := gatewayResourceOfType(t, model.RouteType, "demo/egress", "a", "initial")
+			sibling.Key.Name += "|native"
+			sibling.Facts.AgentioEgress = true
+			server := newTestServer(t, gatewayScope(), []model.Resource{a, b, c, d, other, sibling}, nil)
 			stream := newFakeStream(t.Context(), 8)
 			watches := map[string]*watchState{}
 			subscription := server.resources.Subscribe(t.Context(), model.ClientScope{})
@@ -56,7 +62,7 @@ func TestGatewayNACKRecoveryIncludesUnacceptedUpdatesAndRemovals(t *testing.T) {
 			push := func(resources ...model.Resource) *discoveryv3.DeltaDiscoveryResponse {
 				t.Helper()
 				before := server.resources.Snapshot()
-				after, err := model.NewResourceSet(resources)
+				after, err := model.NewResourceSet(append(resources, other, sibling))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -98,6 +104,19 @@ func TestGatewayNACKRecoveryIncludesUnacceptedUpdatesAndRemovals(t *testing.T) {
 			}
 			if late {
 				ack(newerNonce)
+			}
+			pendingBefore := maps.Clone(watch.pendingAcks)
+			for i := range 3 {
+				other = gatewayResourceOfType(t, model.RouteType, "demo/other", "a", fmt.Sprint(i))
+				push(a, b, c)
+				sibling.Hash = fmt.Sprint(i)
+				push(a, b, c)
+				if len(stream.sent()) != count {
+					t.Fatal("unrelated gateway or variant update retried a rejected response")
+				}
+				if !watch.recovering || !maps.Equal(watch.pendingAcks, pendingBefore) {
+					t.Fatal("unrelated update discarded uncertain updates or removals")
+				}
 			}
 			a = gatewayResourceOfType(t, model.RouteType, "demo/egress", "a", "fixed")
 			recovered := push(a, b, c)
@@ -252,5 +271,98 @@ func TestGatewayFullySupersededResponse(t *testing.T) {
 				t.Fatal("latest acknowledgement lost outstanding delivery state")
 			}
 		})
+	}
+}
+
+func TestGatewayNACKRecoveryTriggers(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		for _, trigger := range []string{"delete", "transfer", "variant", "full", "subscribe", "key notification"} {
+			t.Run(fmt.Sprintf("native=%t/%s", native, trigger), func(t *testing.T) {
+				scope := gatewayScope()
+				if native {
+					scope.Class = model.ClientAgentioEgress
+				}
+				a := gatewayResourceOfType(t, model.RouteType, scope.GatewayKey, "a", "rejected")
+				a.Facts.AgentioEgress = native
+				a, err := model.NewResource(a.Key, a.XDSName, a.Value, nil, a.Facts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server := newTestServer(t, scope, []model.Resource{a}, nil)
+				stream := newFakeStream(t.Context(), 4)
+				watch := &watchState{
+					started:     true,
+					wildcard:    true,
+					trackAcks:   true,
+					recovering:  true,
+					sent:        map[string]string{"a": a.Hash},
+					pendingAcks: map[string]string{"a": "rejected", "deleted": "rejected"},
+				}
+				before := server.resources.Snapshot()
+				next := a
+				next.Hash = ""
+				var resources []model.Resource
+				switch trigger {
+				case "transfer":
+					next.Facts.GatewayOwner = "demo/other"
+					resources = []model.Resource{next}
+				case "variant":
+					next.Facts.AgentioEgress = !native
+					resources = []model.Resource{next}
+				case "full", "subscribe", "key notification":
+					resources = []model.Resource{a}
+				}
+				after, err := model.NewResourceSet(resources)
+				if err != nil {
+					t.Fatal(err)
+				}
+				server.resources.publish(after)
+				switch trigger {
+				case "subscribe":
+					err = server.server.sendDiffForNames(
+						stream,
+						scope,
+						log,
+						model.RouteType,
+						watch,
+						true,
+						[]string{"a"},
+					)
+				case "full":
+					err = server.server.pushUpdate(
+						stream,
+						scope,
+						log,
+						map[string]*watchState{model.RouteType: watch},
+						fullUpdate(t, "ignored"),
+					)
+				case "key notification":
+					store := xdsstore.New(after)
+					sub := store.Subscribe(t.Context(), scope)
+					sub.Watch(model.RouteType)
+					store.NotifyKeys([]model.ResourceKey{a.Key})
+					err = server.server.sendIncremental(stream, scope, log, model.RouteType, watch, <-sub.Updates())
+				default:
+					err = server.server.sendIncremental(stream, scope, log, model.RouteType, watch,
+						updateBetween(before, after, before.Diff(after)))
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(stream.sent()) != 1 {
+					t.Fatal("recovery suppressed a relevant trigger")
+				}
+				response := stream.sent()[0]
+				if trigger == "delete" || trigger == "transfer" || trigger == "variant" {
+					if len(response.Resources) != 0 ||
+						!slices.Equal(response.RemovedResources, []string{"a", "deleted"}) {
+						t.Fatalf("lost ownership withdrawal or uncertain deletion: %v", response)
+					}
+				} else if !slices.Equal(resourceNames(response), []string{"a"}) ||
+					!slices.Equal(response.RemovedResources, []string{"deleted"}) {
+					t.Fatalf("lost uncertain updates or removals: %v", response)
+				}
+			})
+		}
 	}
 }

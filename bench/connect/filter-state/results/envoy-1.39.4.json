@@ -1,0 +1,17 @@
+{
+  "envoy-1.39.4-agentio-egress-gateway-http": {
+    "serial_requests": 300,
+    "serial_origin_connections": 1,
+    "concurrent_requests": 240,
+    "context_checks": 3780,
+    "context_errors": 0,
+    "h2_multiplexed_connect_requests": 240
+  },
+  "envoy-1.39.4-agentio-egress-gateway-tls": {
+    "serial_requests": 300,
+    "serial_origin_connections": 1,
+    "concurrent_requests": 240,
+    "context_checks": 3780,
+    "context_errors": 0
+  }
+}

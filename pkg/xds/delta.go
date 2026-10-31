@@ -286,6 +286,24 @@ func (s *Server) generateAndSend(
 ) error {
 	started := time.Now()
 	if watch.recovering {
+		if !request.Full {
+			relevant := slices.ContainsFunc(
+				request.Update.Candidates(request.TypeURL),
+				func(candidate xdsstore.Candidate) bool {
+					resource, found := request.Snapshot.Get(candidate.Key)
+					if found && scopeAllows(request.Scope, resource) {
+						return true
+					}
+					// Retain withdrawals and ownership transfers, including intermediate owners.
+					return slices.ContainsFunc(candidate.Identities, func(identity xdsstore.Identity) bool {
+						return scopeAllows(request.Scope, model.Resource{Key: candidate.Key, Facts: identity.Facts})
+					})
+				},
+			)
+			if !relevant {
+				return nil
+			}
+		}
 		// Include uncertain removals while retaining already accepted versions.
 		request.Full = true
 		request.Subscription = newSubscriptionView(watch)

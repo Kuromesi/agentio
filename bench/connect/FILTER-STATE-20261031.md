@@ -49,3 +49,19 @@ Networking, the full EPE suite, compiler/xDS/Store and Helm chart tests passed a
 No Kubernetes rollout or new 24-hour soak. Porter/EPE discovery is not exercised by the synthetic state replay. H2 multiplexing checks use cleartext inner HTTP; TLS state checks use HTTP/1 CONNECT.
 
 The initial replay fixture's inner `Connection: close` lost the response through TLS relay on both baseline and candidate. The retained state-isolation comparison uses keepalive and closes after reading the response. This baseline behavior is recorded separately and is not claimed fixed by the filter-state change. The fixture's original Python listen backlog of 5 also caused concurrent connection timeouts; final comparisons use backlog 128.
+
+## Repository replay and CI
+
+The seven-field regression is now retained in [filter-state/verify.py](filter-state/verify.py) and [filter-state/h2_check.py](filter-state/h2_check.py). It reads the checked-in generated native gateway fixture, preserves the generated factories/sharing/relay settings, and replaces identity input with synthetic headers. It asserts all seven fields, including metadata changes/absence, and one external origin connection for 300 serial requests. The HTTP path also runs 240 CONNECT streams multiplexed on one HTTP/2 connection. Pool counts apply only to the serial phase; concurrent traffic is checked for state isolation.
+
+`bin/test_gateway_runtime.sh` builds its [test image](filter-state/Dockerfile) from the selected gateway image and runs this regression in the existing gateway-runtime CI job. Dependencies are Python 3, python-h2 and OpenSSL. For an existing Envoy binary on a host with these dependencies:
+
+```sh
+python3 bench/connect/filter-state/verify.py /absolute/path/to/envoy --output /tmp/agentio-filter-state
+```
+
+The script creates a one-day localhost test certificate, writes bootstraps/logs/results under `--output`, and exits nonzero on a state mismatch or pool-reuse failure. Without `--output` it cleans its temporary files. There is no dependency on the original host's private fixture or certificate files. The runtime assertion always runs, regardless of the fixture filename. The historical TLS-origin comparison remains outside this retained regression.
+
+The repository replay was rerun on my-ecs with Envoy 1.39.4 and 1.40.2; both passed every assertion. The [1.39.4 results](filter-state/results/envoy-1.39.4.json) and [1.40.2 results](filter-state/results/envoy-1.40.2.json) are retained. These runs use the current native golden fixture and generated localhost certificates.
+
+The CI test image was also built from the pinned community Envoy 1.39.4 image and executed as UID 1337 on my-ecs; HTTP, TLS and H2 assertions passed. This verifies the added container entry point, not a rerun of the entire existing gateway-runtime job. Missing and explicitly empty filter state both format as an empty value here; the existing generated-config `SkipIfEmpty` assertions and EPE attribute tests cover metadata absence/fallback semantics.

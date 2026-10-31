@@ -1,0 +1,72 @@
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   37006	     16284 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     56372 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     841	    754139 ns/op	   33148 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     422	   1396191 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     140	   4257699 ns/op	 1278221 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      38	  15045642 ns/op	12146258 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43803033 ns/op	12147040 B/op	   71569 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   35119	     16118 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     56792 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     781	    756228 ns/op	   33155 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     427	   1388550 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     139	   4273568 ns/op	 1278212 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      38	  15386089 ns/op	12146256 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43425951 ns/op	12146712 B/op	   71566 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   37423	     15860 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     55737 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     804	    757671 ns/op	   33149 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     424	   1374041 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     140	   4259800 ns/op	 1278251 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      37	  15118057 ns/op	12146259 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43727333 ns/op	12146755 B/op	   71566 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   35718	     16404 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     55259 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     787	    764666 ns/op	   33159 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     429	   1395979 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     139	   4275279 ns/op	 1278216 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      37	  15184176 ns/op	12146358 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43515676 ns/op	12146342 B/op	   71562 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   36381	     15845 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     55158 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     810	    740451 ns/op	   33156 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     434	   1379864 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     139	   4276232 ns/op	 1278271 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      37	  15462592 ns/op	12146256 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43658217 ns/op	12146824 B/op	   71567 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds/store
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkStorePublish/resources=10000/subscribers=100-4         	   37324	     15979 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=1000-4        	   10000	     56276 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStorePublish/resources=10000/subscribers=10000-4       	     816	    752048 ns/op	   33146 B/op	      59 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=100-4     	     433	   1376629 ns/op	 1278192 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=100/subscribers=1000-4    	     141	   4239684 ns/op	 1278261 B/op	    7650 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=100-4    	      36	  15265952 ns/op	12146324 B/op	   71562 allocs/op
+BenchmarkStoreGatewayBacklog/gateways=1000/subscribers=1000-4   	      13	  43594985 ns/op	12146626 B/op	   71565 allocs/op
+PASS

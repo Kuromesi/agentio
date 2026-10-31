@@ -1,0 +1,156 @@
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1350	    438330 ns/op	   55843 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     133	   4483023 ns/op	  546546 B/op	   10919 allocs/op
+2026-10-30T08:06:26.912098Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=11.995µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  231987	      2484 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:06:27.489552Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=24.969µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   72343	      7627 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:06:28.048284Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=895.999µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5294	    107384 ns/op	   18091 B/op	      26 allocs/op
+2026-10-30T08:06:28.632288Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.577865ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     900	    660888 ns/op	 1138041 B/op	    1067 allocs/op
+2026-10-30T08:06:29.235600Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=972.246µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     688	    857558 ns/op	  144839 B/op	     222 allocs/op
+2026-10-30T08:06:29.832554Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=847.898µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      86	   6917828 ns/op	 1158835 B/op	    1789 allocs/op
+2026-10-30T08:06:30.442906Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.718624ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	      96	   5623691 ns/op	 9105327 B/op	    8548 allocs/op
+2026-10-30T08:06:30.997708Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=588.01µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      13	  45332490 ns/op	72842201 B/op	   68394 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19605	     29766 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1892	    319492 ns/op	   99473 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     164	   3644218 ns/op	 1148830 B/op	   10190 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1351	    439314 ns/op	   55843 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     133	   4452574 ns/op	  546589 B/op	   10919 allocs/op
+2026-10-30T08:06:44.794939Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=12.031µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  238237	      2480 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:06:45.386916Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=15.555µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   81327	      7414 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:06:45.996963Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=990.763µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5330	    107464 ns/op	   18090 B/op	      26 allocs/op
+2026-10-30T08:06:46.585036Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.605631ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     864	    668783 ns/op	 1138042 B/op	    1067 allocs/op
+2026-10-30T08:06:47.171463Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=967.597µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     690	    863246 ns/op	  144841 B/op	     222 allocs/op
+2026-10-30T08:06:47.774109Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=880.518µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      85	   6842539 ns/op	 1158834 B/op	    1789 allocs/op
+2026-10-30T08:06:48.370503Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.101684ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	      93	   5744471 ns/op	 9105392 B/op	    8548 allocs/op
+2026-10-30T08:06:48.919212Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=610.861µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      13	  44945734 ns/op	72842274 B/op	   68395 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19363	     30009 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1816	    319829 ns/op	   99617 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     163	   3679572 ns/op	 1148930 B/op	   10191 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1354	    435526 ns/op	   55844 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     134	   4451087 ns/op	  546548 B/op	   10919 allocs/op
+2026-10-30T08:07:02.549974Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=13.239µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  239468	      2461 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:07:03.140429Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=12.021µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   78988	      7539 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:07:03.742874Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=996.414µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5398	    107050 ns/op	   18090 B/op	      26 allocs/op
+2026-10-30T08:07:04.335708Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.613953ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     896	    658676 ns/op	 1138045 B/op	    1067 allocs/op
+2026-10-30T08:07:04.934626Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=878.534µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     693	    861125 ns/op	  144840 B/op	     222 allocs/op
+2026-10-30T08:07:05.538205Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=717.732µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      85	   6924287 ns/op	 1158832 B/op	    1789 allocs/op
+2026-10-30T08:07:06.141624Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.297461ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	      94	   5787113 ns/op	 9105337 B/op	    8548 allocs/op
+2026-10-30T08:07:06.700527Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=608.778µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      13	  44746252 ns/op	72841976 B/op	   68392 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19602	     29759 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1882	    319530 ns/op	   99269 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     163	   3635448 ns/op	 1148930 B/op	   10191 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1364	    434778 ns/op	   55843 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     133	   4447132 ns/op	  546545 B/op	   10919 allocs/op
+2026-10-30T08:07:47.427078Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=11.903µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  240198	      2532 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:07:48.036593Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=11.83µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   74023	      8106 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:07:48.643968Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=920.823µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5282	    109374 ns/op	   18091 B/op	      26 allocs/op
+2026-10-30T08:07:49.236486Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.409411ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     841	    692233 ns/op	 1138040 B/op	    1067 allocs/op
+2026-10-30T08:07:49.826590Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=969.867µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     662	    871408 ns/op	  144841 B/op	     222 allocs/op
+2026-10-30T08:07:50.410610Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=892.251µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      85	   6891040 ns/op	 1158827 B/op	    1789 allocs/op
+2026-10-30T08:07:51.011436Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.529838ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	     100	   5972877 ns/op	 9105237 B/op	    8547 allocs/op
+2026-10-30T08:07:51.622910Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=679.174µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      13	  46536167 ns/op	72841902 B/op	   68391 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19214	     30182 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1906	    323674 ns/op	   99467 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     160	   3621146 ns/op	 1150118 B/op	   10195 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1369	    435030 ns/op	   55843 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     133	   4454310 ns/op	  546588 B/op	   10919 allocs/op
+2026-10-30T08:08:05.484824Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=13.211µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  225853	      2600 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:08:06.073305Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=11.26µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   80209	      7711 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:08:06.699192Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=984.145µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5235	    107311 ns/op	   18090 B/op	      26 allocs/op
+2026-10-30T08:08:07.276437Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.499794ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     879	    683716 ns/op	 1138044 B/op	    1067 allocs/op
+2026-10-30T08:08:07.885614Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=911.239µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     692	    865089 ns/op	  144841 B/op	     222 allocs/op
+2026-10-30T08:08:08.491543Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=913.305µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      85	   6884519 ns/op	 1158832 B/op	    1789 allocs/op
+2026-10-30T08:08:09.091974Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.819501ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	     100	   5666883 ns/op	 9105272 B/op	    8548 allocs/op
+2026-10-30T08:08:09.673696Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=670.538µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      13	  44874217 ns/op	72841947 B/op	   68392 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19014	     30180 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1885	    324723 ns/op	   99265 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     160	   3669292 ns/op	 1150118 B/op	   10195 allocs/op
+PASS
+goos: linux
+goarch: amd64
+pkg: github.com/openkruise/agentio/pkg/xds
+cpu: Intel(R) Xeon(R) 6982P-C
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=1000-4         	    1365	    437587 ns/op	   55843 B/op	    1109 allocs/op
+BenchmarkDeltaPushMixedClients/resources=10000/changed=1/clients=10000-4        	     130	   4470725 ns/op	  546542 B/op	   10919 allocs/op
+2026-10-30T08:08:23.380544Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=13.102µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=1-4                               	  232164	      2464 ns/op	    1864 B/op	      27 allocs/op
+2026-10-30T08:08:23.954040Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=ad7a7238b0b2ab416d90d500ae08de925f26cda42391313dd75db1e6d33cf980 resources=10 removed=0 size=60B duration=14.391µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=10/changed=10-4                              	   80115	      7551 ns/op	   11682 B/op	      48 allocs/op
+2026-10-30T08:08:24.565766Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=961.651µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1-4                             	    5302	    107301 ns/op	   18090 B/op	      26 allocs/op
+2026-10-30T08:08:25.149561Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.378442ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDeltaACK/resources=1000/changed=1000-4                          	     906	    666910 ns/op	 1138042 B/op	    1067 allocs/op
+2026-10-30T08:08:25.762246Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=910.351µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=8-4               	     692	    857432 ns/op	  144840 B/op	     222 allocs/op
+2026-10-30T08:08:26.363425Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=941.733µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1/ack_every=64-4              	      85	   6874440 ns/op	 1158815 B/op	    1789 allocs/op
+2026-10-30T08:08:26.963176Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=1.675689ms nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=8-4            	     100	   5703467 ns/op	 9105257 B/op	    8547 allocs/op
+2026-10-30T08:08:27.548534Z	info	INFO Delta ADS push component=xds principal=spiffe://cluster.local/ns/demo/sa/egress type_url=type.googleapis.com/envoy.config.route.v3.RouteConfiguration push=full version=0f5782412efac38a161e59283715aea4e880d79775b3da6e086c487563703fca resources=1000 removed=0 size=6.0kB duration=566.972µs nonce_sent=1 nonce_acked="" nonce_nacked="" last_error="" last_error_code=OK
+BenchmarkGatewayDelayedACK/resources=1000/changed=1000/ack_every=64-4           	      12	  44666831 ns/op	72842494 B/op	   68390 allocs/op
+BenchmarkPushScheduler/connections=100-4                                        	   19680	     29952 ns/op	    9483 B/op	     102 allocs/op
+BenchmarkPushScheduler/connections=1000-4                                       	    1892	    321111 ns/op	   99473 B/op	    1005 allocs/op
+BenchmarkPushScheduler/connections=10000-4                                      	     162	   3653879 ns/op	 1149465 B/op	   10192 allocs/op
+PASS

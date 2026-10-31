@@ -56,3 +56,9 @@ docker run --rm --platform linux/amd64 --user 1337:1337 \
   -e AGENTIO_TEST_SDS_HARD_EXPIRY=1 \
   "$image" -test.v -test.timeout=3m \
   -test.run='^TestSDSEnvoyECDSACompatibility$'
+
+# Preserve identity across HTTP/TLS internal hops and reuse external pools,
+# including 24 concurrent CONNECT streams on one HTTP/2 connection.
+docker build --platform linux/amd64 --build-arg "ENVOY_IMAGE=$image" \
+  -f bench/connect/filter-state/Dockerfile -t agentio-filter-state:test .
+docker run --rm --platform linux/amd64 agentio-filter-state:test

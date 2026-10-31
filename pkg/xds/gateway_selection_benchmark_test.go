@@ -142,3 +142,52 @@ func BenchmarkGatewayUnrelatedIncremental(b *testing.B) {
 		})
 	}
 }
+
+func BenchmarkGatewayNACKUnrelatedUpdate(b *testing.B) {
+	for _, count := range []int{10, 1000} {
+		b.Run(fmt.Sprintf("resources=%d", count), func(b *testing.B) {
+			resources := make([]model.Resource, 0, count+1)
+			watch := &watchState{
+				wildcard:    true,
+				recovering:  true,
+				sent:        make(map[string]string, count),
+				pendingAcks: map[string]string{"a-0": "rejected"},
+			}
+			for i := range count {
+				r := gatewayResourceOfType(b, model.RouteType, "demo/egress", fmt.Sprintf("a-%d", i), "payload")
+				resources = append(resources, r)
+				watch.sent[r.XDSName] = r.Hash
+			}
+			other := gatewayResourceOfType(b, model.RouteType, "demo/other", "a-0", "before")
+			resources = append(resources, other)
+			server := newTestServer(b, gatewayScope(), resources, nil)
+			before := server.resources.Snapshot()
+			next := gatewayResourceOfType(b, model.RouteType, "demo/other", "a-0", "after")
+			changes := []model.ResourceChange{{Key: other.Key, Old: &other, New: &next}}
+			after, _, err := before.Apply(changes)
+			if err != nil {
+				b.Fatal(err)
+			}
+			server.resources.publish(after)
+			update := updateBetween(before, after, changes)
+			stream := &countingDeltaStream{ctx: b.Context()}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if err := server.server.sendIncremental(
+					stream,
+					server.scope,
+					log,
+					model.RouteType,
+					watch,
+					update,
+				); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if stream.responses != 0 {
+				b.Fatal("unrelated update retried rejected configuration")
+			}
+		})
+	}
+}
