@@ -263,6 +263,42 @@ async fn shared_and_inline_rules_form_one_ordered_chain() {
 }
 
 #[tokio::test]
+async fn sandbox_without_inline_profile_uses_shared_rules_or_default_allow() {
+    for (shared, want) in [
+        (Some(TcpAction::Allow), "allow"),
+        (Some(TcpAction::Deny), "deny"),
+        (None, "allow"),
+    ] {
+        let p = processor();
+        if let Some(action) = shared {
+            seed_workload(&p.client, Some(policy(Some(action))));
+        } else {
+            seed(
+                &p.client,
+                ResourceKind::Workload,
+                UID,
+                &["/192.0.2.10"],
+                referenced_workload(&[]),
+            );
+        }
+        seed(
+            &p.client,
+            ResourceKind::Sandbox,
+            SANDBOX,
+            &[],
+            Sandbox {
+                uid: SANDBOX.into(),
+                attester: Some(Attester {
+                    workload_uid: UID.into(),
+                }),
+                ..Default::default()
+            },
+        );
+        assert_decision(p.handle(request(SANDBOX)).await.unwrap(), want);
+    }
+}
+
+#[tokio::test]
 async fn workload_update_while_waiting_for_sandbox_rebuilds_snapshot() {
     let p = processor();
     seed_workload(&p.client, Some(policy(Some(TcpAction::Allow))));

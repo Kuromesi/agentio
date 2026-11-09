@@ -260,11 +260,9 @@ impl Resolver<'_> {
                 let View::Sandbox(value) = sandbox.as_ref() else {
                     unreachable!("typed Sandbox watch")
                 };
-                let profile = value
-                    .profile
-                    .as_ref()
-                    .ok_or(ResolveError::PolicyUnavailable)?;
-                if decision.is_none() {
+                if decision.is_none()
+                    && let Some(profile) = &value.profile
+                {
                     decision = profile.tcp_policy.matches(target);
                 }
             }
