@@ -9,6 +9,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "../../api/sandbox/v1/sandbox.proto",
         "../../api/extensions/v1/extensions.proto",
         "../../api/extensions/v1/snipolicy.proto",
+        "../../api/security/v1/snipolicy.proto",
+        "../../api/security/v1/tcppolicy.proto",
+        "../../api/security/v1/securityprofile.proto",
     ];
     tonic_prost_build::configure().compile_protos(&files, &["proto", "../.."])?;
     println!("cargo:rerun-if-changed=proto");

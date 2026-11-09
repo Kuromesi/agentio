@@ -52,6 +52,7 @@ type SandboxPolicies struct {
 	TrafficRules *TrafficPolicyRules
 	// Nil means no Sandbox SecurityProfile; an empty slice declares an empty profile.
 	SecurityRules []agentsv1alpha1.SecurityRule
+	TCPRules      []agentsv1alpha1.TCPRule
 	InputError    string
 }
 

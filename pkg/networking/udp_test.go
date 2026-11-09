@@ -107,6 +107,7 @@ func TestUDPProxyGraph(t *testing.T) {
 		"agentio.connect_authority",
 		"envoy.filters.http.ext_proc",
 		"agentio.connect_workload",
+		"agentio.connect_tcp_decision",
 		"agentio.udp_target",
 		"agentio.udp_target_state",
 		"envoy.filters.http.router",
@@ -115,7 +116,7 @@ func TestUDPProxyGraph(t *testing.T) {
 		t.Fatalf("connect-udp filters = %v, want %v", names, want)
 	}
 	state := &setstatehttpv3.Config{}
-	if err := upgrade.GetFilters()[4].GetTypedConfig().UnmarshalTo(state); err != nil {
+	if err := upgrade.GetFilters()[5].GetTypedConfig().UnmarshalTo(state); err != nil {
 		t.Fatalf("decode udp target state: %v", err)
 	}
 	values := state.GetOnRequestHeaders()

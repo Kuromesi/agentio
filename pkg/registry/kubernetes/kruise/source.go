@@ -139,8 +139,14 @@ func stripSandbox(obj any) (any, error) {
 }
 
 func sandboxSecurityAnnotations(sandbox *agentsv1alpha1.Sandbox) map[string]string {
-	if raw, found := sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules]; found {
-		return map[string]string{agentsv1alpha1.AnnotationSecurityRules: raw}
+	var result map[string]string
+	for _, key := range []string{agentsv1alpha1.AnnotationSecurityRules, agentsv1alpha1.AnnotationTCPRules} {
+		if raw, found := sandbox.Annotations[key]; found {
+			if result == nil {
+				result = make(map[string]string)
+			}
+			result[key] = raw
+		}
 	}
-	return nil
+	return result
 }

@@ -273,7 +273,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	}
 	rawTCP := findFilterChain(t, listeners[MainForward], forwardTCPChain)
 	if got, want := networkFilterNames(rawTCP), []string{
-		"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy",
+		"envoy.filters.network.set_filter_state", "agentio.local_tcp_decision", "envoy.filters.network.tcp_proxy",
 	}; !equalStrings(got, want) {
 		t.Errorf("MainForward raw-TCP filter order = %v, want %v", got, want)
 	}
@@ -304,7 +304,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 			forwardApp.GetMatcherTree().GetExactMatchMap().GetMap()["'h2c'"].GetAction().GetName(),
 			forwardHTTPChain,
 		},
-		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
+		{"MainForward TCP fallback", tcpAllowedChain(t, forwardApp.GetOnNoMatch()), forwardTCPChain},
 	}
 
 	// Gateway exclusions retain precedence over both ztunnel actions and
@@ -332,14 +332,14 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		want string
 	}{
 		"MainInternal excluded SNI",
-		excludes.GetDomainMatchers()[0].GetOnMatch().GetAction().GetName(),
+		tcpAllowedChain(t, excludes.GetDomainMatchers()[0].GetOnMatch()),
 		forwardTCPChain,
 	})
 	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher()
 	if policyMatcher.GetOnNoMatch().GetAction().GetName() != sniDenyChain {
 		t.Fatal("missing native module output must deny")
 	}
-	for action, chain := range map[string]string{"terminate": tlsTerminateChain, "passthrough": forwardTCPChain, "deny": sniDenyChain} {
+	for action, chain := range map[string]string{"terminate": tlsTerminateChain, "passthrough": tlsPassthroughChain, "deny": sniDenyChain} {
 		decisions = append(
 			decisions,
 			struct {
@@ -386,7 +386,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 			want string
 		}{
 			"MainInternal TCP fallback",
-			internalApp.GetOnNoMatch().GetAction().GetName(),
+			tcpAllowedChain(t, internalApp.GetOnNoMatch()),
 			forwardTCPChain,
 		},
 	)

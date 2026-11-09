@@ -151,6 +151,7 @@ func (s *Server) HandleRequestHeaders(
 	// that yields nothing cannot erase a previous one. The stream logger was
 	// already installed above, before the resolve error was honoured.
 	state.stream.Policies.FilterRules = res.Units
+	state.stream.Policies.DestinationAuthorizer = res.DestinationAuthorizer
 	subscriptions, err := s.eng.ValidateSubscriptions(state.stream.Policies.FilterRules)
 	if err != nil {
 		return nil, err
@@ -187,6 +188,8 @@ func (s *Server) requestHeadersResponse(
 	bodyAvailable bool,
 ) ([]*extProcPb.ProcessingResponse, error) {
 	loggerD := log.FromContext(ctx).V(logging.DEBUG)
+
+	state.stream.RequestBypassed = reqHeadersRes.Disposition == engine.DispositionBypassed
 
 	// Authorization pins the approved target but does not itself rewrite policy traffic.
 	state.upstreamMutation = reqHeadersRes.Route != nil && reqHeadersRes.Route.Upstream != nil

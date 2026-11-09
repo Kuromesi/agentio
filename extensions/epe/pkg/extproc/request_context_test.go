@@ -17,7 +17,6 @@ package extproc
 import (
 	"context"
 	"encoding/json"
-	"net/netip"
 	"reflect"
 	"testing"
 
@@ -32,7 +31,6 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
-	"github.com/openkruise/agentio/extensions/epe/pkg/policy/trafficpolicy"
 	"github.com/openkruise/agentio/pkg/dns"
 )
 
@@ -52,7 +50,6 @@ func (p requestScopeProbe) OnResponseHeaders(_ context.Context, st *filter.Strea
 }
 
 func TestRequestContextPinsPoliciesAndProfileInputs(t *testing.T) {
-	native := &egressauthz.Config{}
 	var seen []string
 	visit := func(phase string, scope *inputs.Scope, st *filter.Stream) {
 		t.Helper()
@@ -81,10 +78,21 @@ func TestRequestContextPinsPoliciesAndProfileInputs(t *testing.T) {
 	}
 	store := profilestore.MakeFakeStore(regs...)
 	install := func(version string) {
+		action := "allow"
+		if version == "new" {
+			action = "deny"
+		}
 		for _, name := range []string{"a", "b"} {
 			store.ProfileSet(&agents.SecurityProfile{
 				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
 				Spec: agents.SecurityProfileSpec{
+					TCPRules: []agents.TCPRule{
+						{
+							Name:   "destination",
+							Action: action,
+							Match:  []agents.TCPMatch{{CIDRs: []string{"203.0.113.0/24"}}},
+						},
+					},
 					Inputs: []agents.SecurityProfileInput{
 						{Name: "routing", Inline: map[string]string{"target": name + "-" + version}},
 					},
@@ -105,12 +113,11 @@ func TestRequestContextPinsPoliciesAndProfileInputs(t *testing.T) {
 		ResolveContext: func(_ context.Context, request filter.RequestContext) (filter.RequestContext, error) {
 			request.Caller.Subject.Workload.Labels = map[string]string{"version": version}
 			request.Caller.Subject.Workload.SecurityProfileReferences = []string{"namespaced/ns/a", "namespaced/ns/b"}
-			request.Policies.DestinationAuthorizer = native
 			return request, nil
 		},
 		Resolve:          securityprofile.NewResolver(store, regs, nil),
 		Registrations:    regs,
-		AuthorizeRequest: egressauthz.NewAggregate(dns.NewClient(nil, 0), trafficpolicy.NewAuthorizer()).Authorize,
+		AuthorizeRequest: egressauthz.NewAggregate(dns.NewClient(nil, 0), securityprofile.NewAuthorizer()).Authorize,
 	})
 	headers := makeRequestHeaders("203.0.113.7:443", "/", "GET")
 	headers.EndOfStream = true
@@ -119,10 +126,9 @@ func TestRequestContextPinsPoliciesAndProfileInputs(t *testing.T) {
 	if _, err := srv.HandleRequestHeaders(t.Context(), headers, attrs, state); err != nil {
 		t.Fatal(err)
 	}
-	pinnedNative := state.stream.Policies.DestinationAuthorizer
+	pinned := state.stream.Policies.DestinationAuthorizer
 	install("new")
 	version = "new"
-	native = &egressauthz.Config{DeniedCIDRs: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}}
 	if _, err := srv.HandleResponseHeaders(
 		t.Context(),
 		&extproc.HttpHeaders{
@@ -133,13 +139,13 @@ func TestRequestContextPinsPoliciesAndProfileInputs(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if state.stream.Policies.DestinationAuthorizer != pinnedNative ||
+	if !reflect.DeepEqual(state.stream.Policies.DestinationAuthorizer, pinned) ||
 		state.stream.Caller.Subject.Workload.Labels["version"] != "old" {
 		t.Fatal("source update replaced in-flight snapshot")
 	}
 	responses, err := srv.HandleRequestHeaders(t.Context(), headers, attrs, newStreamState())
 	if err != nil || responses[0].GetImmediateResponse().GetStatus().GetCode() != 403 {
-		t.Fatalf("new request did not use updated native policy: %v %v", responses, err)
+		t.Fatalf("new request did not use updated TCP policy: %v %v", responses, err)
 	}
 	want := []string{
 		"request/a/a-old",

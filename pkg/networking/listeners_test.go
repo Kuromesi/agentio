@@ -342,11 +342,11 @@ func TestBuildWithoutSNITrafficPolicyUsesProtocolMatcher(t *testing.T) {
 	for _, chain := range internal.GetFilterChains() {
 		gotChains = append(gotChains, chain.GetName())
 	}
-	if want := []string{forwardHTTPChain, forwardTCPChain}; !equalStrings(gotChains, want) {
+	if want := []string{forwardHTTPChain, forwardTCPChain, tcpDenyChain}; !equalStrings(gotChains, want) {
 		t.Fatalf("MainInternal filter chains = %v, want %v without SNI policy runtime", gotChains, want)
 	}
 	tls := internal.GetFilterChainMatcher().GetMatcherTree().GetExactMatchMap().GetMap()["tls"]
-	if got := tls.GetAction().GetName(); got != forwardTCPChain {
+	if got := tcpAllowedChain(t, tls); got != forwardTCPChain {
 		t.Fatalf("TLS fallback chain = %q, want %q without SNI policy runtime", got, forwardTCPChain)
 	}
 }
@@ -406,10 +406,15 @@ func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
 			t.Errorf("legacy=%v: post-TLS inspectors = %v, want original_dst and HTTP only", legacy, inspectors)
 		}
 		chain := findFilterChain(t, forward, forwardTCPChain)
-		if !equalStrings(
-			networkFilterNames(chain),
-			[]string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"},
-		) {
+		wantFilters := []string{"envoy.filters.network.set_filter_state", "envoy.filters.network.tcp_proxy"}
+		if !legacy {
+			wantFilters = []string{
+				"envoy.filters.network.set_filter_state",
+				"agentio.local_tcp_decision",
+				"envoy.filters.network.tcp_proxy",
+			}
+		}
+		if !equalStrings(networkFilterNames(chain), wantFilters) {
 			t.Errorf(
 				"legacy=%v: TCP filters = %v, want outer TLS identity and TCP proxy",
 				legacy,
@@ -436,7 +441,7 @@ func TestPostTLSForwardingPreservesOuterDestination(t *testing.T) {
 			}
 		}
 		proxy := &tcpproxyv3.TcpProxy{}
-		if err := chain.GetFilters()[1].GetTypedConfig().UnmarshalTo(proxy); err != nil {
+		if err := chain.GetFilters()[len(chain.Filters)-1].GetTypedConfig().UnmarshalTo(proxy); err != nil {
 			t.Fatal(err)
 		}
 		if proxy.GetCluster() != TLSProxyOriginate {
@@ -553,7 +558,7 @@ func TestGatewayListenersUseSupportedAgentioSemantics(t *testing.T) {
 
 // A silent client must be disconnected after inspection expires, including
 // when TLS termination or SNI policy changes the listener's matcher tree.
-func TestGatewayProtocolDetectionTimeoutClosesConnection(t *testing.T) {
+func TestGatewayProtocolDetectionTimeoutUsesTCPDecision(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		legacyGateway  bool
@@ -592,16 +597,20 @@ func TestGatewayProtocolDetectionTimeoutClosesConnection(t *testing.T) {
 					timeout.AsDuration() != time.Second {
 					t.Errorf("%s inspection timeout = %v, want 1s", name, timeout)
 				}
-				if listener.GetContinueOnListenerFiltersTimeout() {
-					t.Errorf("%s must close the connection when inspection times out", name)
+				if listener.GetContinueOnListenerFiltersTimeout() == tc.legacyGateway {
+					t.Errorf("%s: timeout continuation must match gateway mode", name)
 				}
 				// Non-HTTP traffic that completes inspection retains TCP forwarding.
 				fallback := listener.GetFilterChainMatcher().GetOnNoMatch()
 				for fallback.GetMatcher() != nil {
 					fallback = fallback.GetMatcher().GetOnNoMatch()
 				}
-				if got := fallback.GetAction().GetName(); got != forwardTCPChain {
-					t.Fatalf("%s TCP fallback chain = %q, want %q", name, got, forwardTCPChain)
+				want := tcpDenyChain
+				if tc.legacyGateway {
+					want = forwardTCPChain
+				}
+				if got := fallback.GetAction().GetName(); got != want {
+					t.Fatalf("%s TCP fallback chain = %q, want %q", name, got, want)
 				}
 				chain := findFilterChain(t, listener, forwardTCPChain)
 				if got := chain.GetFilters()[len(chain.GetFilters())-1].GetName(); got != "envoy.filters.network.tcp_proxy" {

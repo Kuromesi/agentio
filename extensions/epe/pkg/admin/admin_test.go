@@ -524,3 +524,27 @@ func TestDebugDisabled(t *testing.T) {
 		t.Errorf("index should report debug disabled, got: %s", rec.Body.String())
 	}
 }
+
+func TestTCPOnlySandboxFullView(t *testing.T) {
+	p, err := securityprofile.NewSandboxProfile(
+		&metav1.PartialObjectMetadata{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "tcp-only",
+				Namespace: "ns",
+				Annotations: map[string]string{
+					v1alpha1.AnnotationTCPRules: `[{"name":"deny","match":[{"cidrs":["10.0.0.0/8"]}],"action":"deny"}]`,
+				},
+			},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := toView(p, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Spec.Rules) != 0 || len(view.Spec.TCPRules) != 1 || view.Spec.TCPRules[0].Action != "deny" {
+		t.Fatalf("full view lost TCP rules: %+v", view.Spec)
+	}
+}

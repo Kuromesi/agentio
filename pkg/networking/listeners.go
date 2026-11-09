@@ -42,6 +42,7 @@ import (
 	tlsinspectorv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcmv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	setstatenetworkv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/set_filter_state/v3"
+	snidfpv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/sni_dynamic_forward_proxy/v3"
 	tcpproxyv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/tcp_proxy/v3"
 	matchinginputv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/matching/common_inputs/network/v3"
 	rlexprv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/rate_limit_descriptors/expr/v3"
@@ -66,6 +67,8 @@ import (
 const (
 	forwardHTTPChain              = "forward-http"
 	forwardTCPChain               = "forward-tcp"
+	tcpDenyChain                  = "tcp-policy-deny"
+	tlsPassthroughChain           = "tls-passthrough"
 	tlsTerminateChain             = "tls-terminate"
 	sniDenyChain                  = "sni-traffic-policy-deny"
 	tlsActionKey                  = "agentio.tls.action"
@@ -242,7 +245,16 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		},
 		{Name: forwardTCPChain, Filters: b.applicationTCPFilters(config, nil, PassthroughCluster, tcpSettings)},
 	}
-	internalChainMatcher := b.protocolMatcher(b.toChain(forwardTCPChain))
+	if !b.legacyGateway {
+		internalChains = append(
+			internalChains,
+			&listenerv3.FilterChain{
+				Name:    tcpDenyChain,
+				Filters: b.applicationTCPFilters(config, nil, BlackHoleCluster, tcpSettings),
+			},
+		)
+	}
+	internalChainMatcher := b.protocolMatcher(b.tcpFallthrough())
 	if features.EnableSNITrafficPolicy {
 		denyProxy := &tcpproxyv3.TcpProxy{
 			StatPrefix:       sniDenyChain,
@@ -269,6 +281,37 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 				Filters: denyFilters,
 			},
 		)
+		if !b.legacyGateway {
+			internalChains = append(
+				internalChains,
+				&listenerv3.FilterChain{
+					Name: tlsPassthroughChain,
+					Filters: b.applicationTCPFilters(config, []*listenerv3.Filter{
+						networkFilter(
+							"envoy.filters.network.set_filter_state",
+							b.pack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
+								{
+									Key: &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: dynamicPortKey},
+									Value: &setstatecommonv3.FilterStateValue_FormatString{
+										FormatString: formatString("%DOWNSTREAM_LOCAL_PORT%"),
+									},
+								},
+							}}),
+						),
+						networkFilter(
+							"envoy.filters.network.sni_dynamic_forward_proxy",
+							b.pack(
+								&snidfpv3.FilterConfig{
+									DnsCacheConfig: dnsCacheConfig(b.legacyGateway),
+									PortSpecifier:  &snidfpv3.FilterConfig_PortValue{PortValue: 443},
+								},
+							),
+						),
+					}, HTTPDynamicForwardProxy, tcpSettings),
+				},
+			)
+
+		}
 		internalChainMatcher = b.protocolMatcher(toMatcher(
 			b.sniTrafficPolicyMatcher(config.gateway.GetTlsTermination().GetExcludeHosts()),
 		))
@@ -285,9 +328,9 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 		ListenerFilters:    inspectorsHTTPFirst,
 		FilterChains:       internalChains,
 		FilterChainMatcher: internalChainMatcher,
-		// Close on timeout so delayed client bytes cannot bypass inspection.
+		// Unknown or delayed protocols fall through to the original-destination policy.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: false,
+		ContinueOnListenerFiltersTimeout: !b.legacyGateway,
 	}
 	if features.EnableSNITrafficPolicy && !b.legacyGateway {
 		mainInternal.ListenerFilters = append(
@@ -320,11 +363,31 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 			},
 		},
 		FilterChainMatcher: b.applicationMatcher(),
-		// Apply the same close-on-timeout behavior after TLS termination.
+		// Server-first decrypted protocols use the same TCP fallthrough decision.
 		ListenerFiltersTimeout:           durationpb.New(time.Second),
-		ContinueOnListenerFiltersTimeout: false,
+		ContinueOnListenerFiltersTimeout: !b.legacyGateway,
+	}
+	if !b.legacyGateway {
+		mainForward.FilterChains = append(
+			mainForward.FilterChains,
+			&listenerv3.FilterChain{
+				Name:    tcpDenyChain,
+				Filters: b.applicationTCPFilters(config, nil, BlackHoleCluster, tcpSettings),
+			},
+		)
 	}
 	for _, listener := range []*listenerv3.Listener{connect, mainInternal, mainForward} {
+		if !b.legacyGateway && listener != connect {
+			for _, chain := range listener.FilterChains {
+				if chain.Name != forwardHTTPChain && chain.Name != forwardTCPChain &&
+					chain.Name != tlsPassthroughChain {
+					continue
+				}
+				last := len(chain.Filters) - 1
+				terminal := chain.Filters[last]
+				chain.Filters = append(chain.Filters[:last], localTCPDecisionFilter(), terminal)
+			}
+		}
 		if config.telemetry != nil {
 			for _, accessLog := range config.telemetry.ListenerAccessLogs {
 				listener.AccessLog = append(listener.AccessLog, proto.Clone(accessLog).(*accesslogv3.AccessLog))
@@ -348,7 +411,7 @@ func (b *resourceBuilder) buildConnectHCM(config effectiveConfig) (*hcmv3.HttpCo
 		filters = []*hcmv3.HttpFilter{legacyPeerMetadataFilter, authority}
 	}
 	if !b.legacyGateway {
-		filters = append(filters, b.connectExtProcFilter(), connectWorkloadFilter())
+		filters = append(filters, b.connectExtProcFilter(), connectWorkloadFilter(), connectTCPDecisionFilter())
 		if features.EnableSNITrafficPolicy {
 			filters = append(filters, connectPolicyFilter())
 		}
@@ -1159,7 +1222,7 @@ func (b *resourceBuilder) sniTrafficPolicyMatcher(excludeHosts []string) *xdsmat
 	}
 	domains := &xdsmatcherv3.ServerNameMatcher{DomainMatchers: []*xdsmatcherv3.ServerNameMatcher_DomainMatcher{{
 		Domains: excludeHosts,
-		OnMatch: b.toChain(forwardTCPChain),
+		OnMatch: b.tcpFallthrough(),
 	}}}
 	return &xdsmatcherv3.Matcher{
 		MatcherType: &xdsmatcherv3.Matcher_MatcherTree_{MatcherTree: &xdsmatcherv3.Matcher_MatcherTree{
@@ -1179,7 +1242,7 @@ func (b *resourceBuilder) staticSNIMatcher(config *configv1.TlsTerminationConfig
 		domains []string
 		onMatch *xdsmatcherv3.Matcher_OnMatch
 	}{
-		{domains: config.GetExcludeHosts(), onMatch: b.toChain(forwardTCPChain)},
+		{domains: config.GetExcludeHosts(), onMatch: b.tcpFallthrough()},
 		{domains: config.GetIncludeHosts(), onMatch: b.toChain(tlsTerminateChain)},
 	} {
 		// Exclusions come first; Envoy rejects a domain registered more than once.
@@ -1208,7 +1271,7 @@ func (b *resourceBuilder) staticSNIMatcher(config *configv1.TlsTerminationConfig
 				TypedConfig: typedConfig,
 			}},
 		}},
-		OnNoMatch: toMatcher(b.protocolMatcher(b.toChain(forwardTCPChain))),
+		OnNoMatch: toMatcher(b.protocolMatcher(b.tcpFallthrough())),
 	}
 }
 
@@ -1226,16 +1289,26 @@ func (b *resourceBuilder) applicationMatcher() *xdsmatcherv3.Matcher {
 		// Disabled HTTP/1.0 must be rejected by the HCM, not bypass it as TCP.
 		"'http/1.0'": b.toChain(forwardHTTPChain),
 		"'http/1.1'": b.toChain(forwardHTTPChain),
-	}, b.toChain(forwardTCPChain))
+	}, b.tcpFallthrough())
 }
 
 func (b *resourceBuilder) tlsActionMatcher(gatewayDecision *xdsmatcherv3.Matcher_OnMatch) *xdsmatcherv3.Matcher {
-	return exactMatcher(typedExtension("tls-action", b.pack(&matchinginputv3.FilterStateInput{Key: tlsActionKey})),
-		map[string]*xdsmatcherv3.Matcher_OnMatch{
-			"terminate":   b.toChain(tlsTerminateChain),
-			"passthrough": b.toChain(forwardTCPChain),
-			"deny":        b.toChain(sniDenyChain),
-		}, gatewayDecision)
+	values := map[string]*xdsmatcherv3.Matcher_OnMatch{
+		"terminate": b.toChain(
+			tlsTerminateChain,
+		),
+		"passthrough": b.toChain(forwardTCPChain),
+		"deny":        b.toChain(sniDenyChain),
+	}
+	if !b.legacyGateway {
+		values["passthrough"] = b.toChain(tlsPassthroughChain)
+		values["fallthrough"] = b.tcpFallthrough()
+	}
+	return exactMatcher(
+		typedExtension("tls-action", b.pack(&matchinginputv3.FilterStateInput{Key: tlsActionKey})),
+		values,
+		gatewayDecision,
+	)
 }
 
 func exactMatcher(
@@ -1336,6 +1409,59 @@ func buildCaptureSNIFilter(factory, key string) *listenerv3.Filter {
 					FormatString: formatString("%REQUESTED_SERVER_NAME%"),
 				},
 				SharedWithUpstream: setstatecommonv3.FilterStateValue_ONCE,
+				SkipIfEmpty:        true,
+			},
+		}}),
+	)
+}
+
+// Only an explicit allow may select the original-destination TCP chain.
+func (b *resourceBuilder) tcpFallthrough() *xdsmatcherv3.Matcher_OnMatch {
+	if b.legacyGateway {
+		return b.toChain(forwardTCPChain)
+	}
+	return toMatcher(
+		exactMatcher(
+			typedExtension(
+				"tcp-decision",
+				b.pack(&matchinginputv3.FilterStateInput{Key: model.FilterStateTCPDecision}),
+			),
+			map[string]*xdsmatcherv3.Matcher_OnMatch{"allow": b.toChain(forwardTCPChain)},
+			b.toChain(tcpDenyChain),
+		),
+	)
+}
+
+func connectTCPDecisionFilter() *hcmv3.HttpFilter {
+	return httpFilter(
+		"agentio.connect_tcp_decision",
+		mustPack(&setstatehttpv3.Config{OnRequestHeaders: []*setstatecommonv3.FilterStateValue{
+			{
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: model.FilterStateTCPDecision},
+				FactoryKey: "envoy.hashable_string",
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%DYNAMIC_METADATA(agentio:tcp:original_destination_decision)%"),
+				},
+				SharedWithUpstream: setstatecommonv3.FilterStateValue_TRANSITIVE,
+				ReadOnly:           true,
+				SkipIfEmpty:        true,
+			},
+		}}),
+	)
+}
+
+// Chain selection has consumed the decision; only TLS termination needs another internal hop.
+func localTCPDecisionFilter() *listenerv3.Filter {
+	return networkFilter(
+		"agentio.local_tcp_decision",
+		mustPack(&setstatenetworkv3.Config{OnNewConnection: []*setstatecommonv3.FilterStateValue{
+			{
+				Key:        &setstatecommonv3.FilterStateValue_ObjectKey{ObjectKey: model.FilterStateTCPDecision},
+				FactoryKey: "envoy.string",
+				Value: &setstatecommonv3.FilterStateValue_FormatString{
+					FormatString: formatString("%FILTER_STATE(" + model.FilterStateTCPDecision + ":PLAIN)%"),
+				},
+				SharedWithUpstream: setstatecommonv3.FilterStateValue_NONE,
 				SkipIfEmpty:        true,
 			},
 		}}),

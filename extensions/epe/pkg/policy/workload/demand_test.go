@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package trafficpolicy
+package workload
 
 import (
 	"context"
@@ -39,7 +39,6 @@ import (
 	sandboxv1 "github.com/openkruise/agentio/api/sandbox/v1"
 	sec "github.com/openkruise/agentio/api/security/v1"
 	workload "github.com/openkruise/agentio/api/workload/v1"
-	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/store"
@@ -48,6 +47,7 @@ import (
 	"github.com/openkruise/agentio/pkg/demandcache"
 	"github.com/openkruise/agentio/pkg/krt"
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/policy"
 	controlxds "github.com/openkruise/agentio/pkg/xds"
 	controlstore "github.com/openkruise/agentio/pkg/xds/store"
 	"github.com/openkruise/agentio/pkg/xdsclient"
@@ -122,11 +122,6 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 			}},
 		)
 	}
-	policyResource := func(name string, action sec.TrafficPolicy_Action) model.Resource {
-		return resource(model.TrafficPolicyType, name, &sec.TrafficPolicy{Egress: &sec.TrafficPolicy_RuleSet{
-			Rules: []*sec.TrafficPolicy_Rule{{Action: action, Match: &sec.TrafficPolicy_Match{}}},
-		}}, model.ResourceFacts{})
-	}
 	profileResource := func(name, rule string) model.Resource {
 		document := model.HTTPPolicy{
 			Rules: []agentsv1alpha1.SecurityRule{
@@ -140,17 +135,15 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 		return resource(
 			model.SecurityProfileType,
 			"global/"+name,
-			&sec.SecurityProfile{Name: name, PolicyJson: data},
+			&sec.SecurityProfile{Name: name, PolicyJson: data, TcpPolicy: &sec.TCPPolicy{}},
 			model.ResourceFacts{},
 		)
 	}
 	requestedWorkload := workloadResource(uid, "pod", "policy")
-	requestedPolicy := policyResource("policy", sec.TrafficPolicy_ALLOW)
 	initial, err := model.NewResourceSet([]model.Resource{
-		requestedWorkload, requestedPolicy,
+		requestedWorkload,
 		profileResource("policy", "initial"), profileResource("unused", "unused"),
 		workloadResource("edge//Pod/ns/unused", "unused", "unused"),
-		policyResource("unused", sec.TrafficPolicy_ALLOW),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +165,6 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 		},
 	}, publications, func() bool { return true }, 16, map[string]controlxds.ResourceGenerator{
 		model.WorkloadType:        controlxds.WorkloadGenerator{},
-		model.TrafficPolicyType:   controlxds.TrafficPolicyGenerator{},
 		model.SecurityProfileType: controlxds.SecurityProfileGenerator{},
 		model.SandboxType:         controlxds.SandboxGenerator{},
 	}, 2, 0)
@@ -268,9 +260,10 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 			t.Fatalf("initial %s watch fetched %d unsolicited resources", typ, len(values))
 		}
 	}
-	resolver := &resourceResolver{source: aggregate}
 	subj := subject.Subject{Workload: subject.Workload{Namespace: "ns", Name: "pod"}}
-	resolveWorkload := workloadResolver(aggregate)
+	resolveWorkload := func(ctx context.Context, w subject.Workload) (subject.Workload, error) {
+		return lookupBinding(ctx, aggregate, subject.Subject{Workload: w})
+	}
 	beforeDemand := aggregate.Snapshot()
 	resolved, err := resolveWorkload(ctx, subj.Workload)
 	if err != nil || resolved.UID != uid || len(resolved.SecurityProfileReferences) != 1 {
@@ -296,37 +289,24 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 		}
 	}
 	target := netip.MustParseAddrPort("203.0.113.7:443")
-	checkAction := func(want egressauthz.Action) {
+	checkAction := func(want bool) {
 		t.Helper()
-		cfg, err := resolver.config(ctx, subj)
+		current, err := resolveWorkload(ctx, subj.Workload)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := cfg.Evaluate(target).Action; got != want {
-			t.Fatalf("action = %v, want %v", got, want)
+		profiles, err := profileStore.ResolveProfiles(ctx, subject.Subject{Workload: current})
+		if err != nil || len(profiles) != 1 {
+			t.Fatalf("resolve profile: %v %v", profiles, err)
+		}
+		got, _ := policy.MatchTCPRules(profiles[0].TCPPolicy.GetRules(), target)
+		if got != want {
+			t.Fatalf("allowed=%v, want %v", got, want)
 		}
 	}
-	checkAction(egressauthz.Allow)
+	checkAction(true)
 	if aggregate.Snapshot() != beforeDemand {
 		t.Fatal("cold dependency resolution rebuilt the global index")
-	}
-	// Source deletion can precede binding recomputation. Even a cold demand
-	// (capacity one evicts the policy when acquiring the Workload) must still work.
-	if _, err := publications.Apply(
-		[]model.ResourceChange{{Key: requestedPolicy.Key, Old: &requestedPolicy}},
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists := publications.Snapshot().Get(requestedPolicy.Key); !exists {
-		t.Fatal("policy body disappeared before its Workload binding")
-	}
-	for range 10 {
-		checkAction(egressauthz.Allow)
-	}
-	if _, err := publications.Apply(
-		[]model.ResourceChange{{Key: requestedPolicy.Key, New: &requestedPolicy}},
-	); err != nil {
-		t.Fatal(err)
 	}
 	if capacity == 1 {
 		// A Workload plus its policy exceed the target; both remain pinned
@@ -336,12 +316,12 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 		for range 16 {
 			workers.Go(func() {
 				for range 10 {
-					cfg, err := resolver.config(ctx, subj)
+					profiles, err := profileStore.ResolveProfiles(ctx, subject.Subject{Workload: resolved})
 					if err != nil {
 						failures <- err
 						return
 					}
-					if cfg.Evaluate(target).Action != egressauthz.Allow {
+					if allowed, _ := policy.MatchTCPRules(profiles[0].TCPPolicy.GetRules(), target); !allowed {
 						t.Error("pinned policy denied")
 					}
 				}
@@ -417,26 +397,33 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 	if metricValue("epe_profile_stale") != 0 {
 		t.Fatal("accepted update did not clear policy degradation")
 	}
-	denied := policyResource("policy", sec.TrafficPolicy_DENY)
+	denied := resource(model.SecurityProfileType, "global/policy", &sec.SecurityProfile{
+		Name:       "policy",
+		PolicyJson: []byte(`{"rules":[]}`),
+		TcpPolicy: &sec.TCPPolicy{
+			Rules: []*sec.TCPRule{{Name: "deny", Action: sec.TCPAction_TCP_ACTION_DENY, Match: []*sec.TCPMatch{{}}}},
+		},
+	}, model.ResourceFacts{})
 	apply(model.ResourceChange{Key: denied.Key, New: &denied})
 	await(func() bool {
-		value, err := aggregate.Get(store.Key{Type: store.TrafficPolicy, Name: "policy"})
-		return err == nil && value != nil &&
-			value.Value.(*sec.TrafficPolicy).Egress.Rules[0].Action == sec.TrafficPolicy_DENY
+		profiles, err := profileStore.ResolveProfiles(ctx, subject.Subject{Workload: resolved})
+		return err == nil && len(profiles) == 1 && len(profiles[0].TCPPolicy.GetRules()) == 1
 	})
-	checkAction(egressauthz.Deny)
-	apply(model.ResourceChange{Key: requestedWorkload.Key, Old: &requestedWorkload},
-		model.ResourceChange{Key: denied.Key, Old: &denied})
-	await(func() bool {
-		snapshot := client.Snapshot()
-		return len(snapshot.Resources[model.WorkloadType]) == 0 && len(snapshot.Resources[model.TrafficPolicyType]) == 0
-	})
-	if _, err := resolver.config(ctx, subj); err == nil {
+	checkAction(false)
+	apply(model.ResourceChange{Key: requestedWorkload.Key, Old: &requestedWorkload})
+	await(func() bool { return len(client.Snapshot().Resources[model.WorkloadType]) == 0 })
+	if _, err := resolveWorkload(ctx, subj.Workload); err == nil {
 		t.Fatal("deleted Workload authorized")
 	}
-	apply(model.ResourceChange{Key: requestedWorkload.Key, New: &requestedWorkload},
-		model.ResourceChange{Key: requestedPolicy.Key, New: &requestedPolicy})
-	checkAction(egressauthz.Allow)
+	apply(
+		model.ResourceChange{Key: requestedWorkload.Key, New: &requestedWorkload},
+		model.ResourceChange{Key: replacement.Key, New: &replacement},
+	)
+	await(func() bool {
+		profiles, err := profileStore.ResolveProfiles(ctx, subject.Subject{Workload: resolved})
+		return err == nil && len(profiles) == 1 && len(profiles[0].TCPPolicy.GetRules()) == 0
+	})
+	checkAction(true)
 	// A new binding must demand a previously uncached policy before authorizing.
 	rebound := workloadResource(uid, "pod", "unused")
 	apply(model.ResourceChange{Key: rebound.Key, New: &rebound})
@@ -445,18 +432,15 @@ func testDemandDiscovery(t *testing.T, capacity int) {
 		if err != nil || value == nil {
 			return false
 		}
-		refs, err := references(value.Value.(*workload.Workload))
-		return err == nil && len(refs) == 1 && refs[0] == "unused"
+		binding, err := workloadBinding(value.Value.(*workload.Workload))
+		return err == nil && len(binding.SecurityProfileReferences) == 1 &&
+			binding.SecurityProfileReferences[0] == "global/unused"
 	})
-	checkAction(egressauthz.Allow)
-	await(func() bool {
-		snapshot := client.Snapshot()
-		return snapshot.Resources[model.TrafficPolicyType]["policy"] == nil
-	})
+	checkAction(true)
 	snapshot := client.Snapshot()
-	if len(snapshot.Resources[model.WorkloadType]) != 1 || len(snapshot.Resources[model.TrafficPolicyType]) != 1 ||
-		snapshot.Resources[model.TrafficPolicyType]["unused"] == nil {
-		t.Fatal("rebinding should replace the policy without fetching unrelated Workloads")
+	if len(snapshot.Resources[model.WorkloadType]) != 1 ||
+		snapshot.Resources[model.SecurityProfileType]["global/unused"] == nil {
+		t.Fatal("rebinding did not demand its SecurityProfile")
 	}
 	resolved, err = resolveWorkload(ctx, subj.Workload)
 	if err != nil {

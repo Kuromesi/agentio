@@ -15,6 +15,7 @@ package securityprofile
 
 import (
 	"context"
+	"net/netip"
 
 	"github.com/openkruise/agentio/extensions/epe/pkg/audit"
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
@@ -22,6 +23,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/httpreq"
 	"github.com/openkruise/agentio/extensions/epe/pkg/inputs"
 	"github.com/openkruise/agentio/extensions/epe/pkg/subject"
+	"github.com/openkruise/agentio/pkg/policy"
 )
 
 // Matcher is the profile lookup NewResolver needs. It is declared here, on
@@ -69,15 +71,14 @@ func NewResolver(matcher Matcher, regs []filter.Registration, sink audit.Sink) e
 			// engine-eval failure; Units stays empty so nothing is evaluated.
 			return engine.Resolution{StreamLogger: streamLoggerFor(sink, units)}, err
 		}
-		if len(units) == 0 {
-			return engine.Resolution{}, nil
-		}
+
 		engineUnits := make([]engine.Unit, len(units))
 		for i := range units {
 			engineUnits[i] = units[i].Unit
 		}
 		return engine.Resolution{
-			Units: engineUnits,
+			Units:                 engineUnits,
+			DestinationAuthorizer: tcpAuthorizer(profiles),
 			// The logger keeps the full units — profile, rule and the match
 			// clause that fired — in this package's own types. The adapter
 			// invokes it at stream end without naming any of them.
@@ -94,4 +95,60 @@ func streamLoggerFor(sink audit.Sink, units []unit) filter.StreamLogger {
 		return nil
 	}
 	return newStreamLogger(sink, units)
+}
+
+type authorizer struct{}
+
+// NewAuthorizer evaluates the profile snapshot prepared with the HTTP rules.
+func NewAuthorizer() filter.DestinationAuthorizer { return authorizer{} }
+
+func (authorizer) Authorize(
+	ctx context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	if stream.Policies.DestinationAuthorizer == nil {
+		return candidates, nil
+	}
+	return stream.Policies.DestinationAuthorizer.Authorize(ctx, stream, candidates)
+}
+
+// tcpAuthorizer retains exactly the profile snapshot used for HTTP rules.
+type tcpAuthorizer []*Profile
+
+func (profiles tcpAuthorizer) Authorize(
+	_ context.Context,
+	stream *filter.Stream,
+	candidates []netip.AddrPort,
+) ([]netip.AddrPort, error) {
+	if stream.RequestBypassed {
+		return candidates, nil
+	}
+	allowed := make([]netip.AddrPort, 0, len(candidates))
+	for _, target := range candidates {
+		permit := true
+		for _, profile := range profiles {
+			decision, index := policy.MatchTCPRules(profile.TCPPolicy.GetRules(), target)
+			if index < 0 {
+				continue
+			}
+			permit = decision
+			if !permit {
+				stream.Info.RecordAuthorization(
+					filter.AuthorizationDecision{
+						Action:      "deny",
+						Destination: target.String(),
+						Policy:      profile.ResourceName(),
+						RuleIndex:   &index,
+						Reason:      filter.AuthorizationReasonPolicyDenied,
+					},
+				)
+			}
+			break
+		}
+		if permit {
+			allowed = append(allowed, target)
+		}
+	}
+	return allowed, nil
 }

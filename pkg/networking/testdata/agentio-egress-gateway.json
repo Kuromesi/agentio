@@ -1033,6 +1033,27 @@
                       }
                     },
                     {
+                      "name": "agentio.connect_tcp_decision",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
+                        "onRequestHeaders": [
+                          {
+                            "objectKey": "agentio.tcp.original_destination_decision",
+                            "factoryKey": "envoy.hashable_string",
+                            "formatString": {
+                              "textFormatSource": {
+                                "inlineString": "%DYNAMIC_METADATA(agentio:tcp:original_destination_decision)%"
+                              },
+                              "omitEmptyValues": true
+                            },
+                            "readOnly": true,
+                            "sharedWithUpstream": "TRANSITIVE",
+                            "skipIfEmpty": true
+                          }
+                        ]
+                      }
+                    },
+                    {
                       "name": "agentio.connect_sni_policy",
                       "typedConfig": {
                         "@type": "type.googleapis.com/envoy.extensions.filters.http.set_filter_state.v3.Config",
@@ -1246,6 +1267,25 @@
           {
             "filters": [
               {
+                "name": "agentio.local_tcp_decision",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "agentio.tcp.original_destination_decision",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.tcp.original_destination_decision:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "skipIfEmpty": true,
+                      "factoryKey": "envoy.string"
+                    }
+                  ]
+                }
+              },
+              {
                 "name": "envoy.filters.network.http_connection_manager",
                 "typedConfig": {
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager",
@@ -1429,6 +1469,25 @@
           {
             "filters": [
               {
+                "name": "agentio.local_tcp_decision",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "agentio.tcp.original_destination_decision",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.tcp.original_destination_decision:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "skipIfEmpty": true,
+                      "factoryKey": "envoy.string"
+                    }
+                  ]
+                }
+              },
+              {
                 "name": "envoy.filters.network.tcp_proxy",
                 "typedConfig": {
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
@@ -1440,6 +1499,21 @@
               }
             ],
             "name": "forward-tcp"
+          },
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.tcp_proxy",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+                  "statPrefix": "BlackHoleCluster",
+                  "cluster": "BlackHoleCluster",
+                  "idleTimeout": "120s",
+                  "maxDownstreamConnectionDuration": "600s"
+                }
+              }
+            ],
+            "name": "tcp-policy-deny"
           },
           {
             "filters": [
@@ -1656,6 +1730,108 @@
               }
             ],
             "name": "sni-traffic-policy-deny"
+          },
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.set_filter_state",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "envoy.upstream.dynamic_port",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%DOWNSTREAM_LOCAL_PORT%"
+                        },
+                        "omitEmptyValues": true
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "envoy.filters.network.sni_dynamic_forward_proxy",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.sni_dynamic_forward_proxy.v3.FilterConfig",
+                  "dnsCacheConfig": {
+                    "name": "agentio_dns_cache",
+                    "dnsLookupFamily": "V4_ONLY",
+                    "resolvedAddressFilter": {
+                      "ranges": [
+                        {
+                          "addressPrefix": "127.0.0.0",
+                          "prefixLen": 8
+                        },
+                        {
+                          "addressPrefix": "::ffff:127.0.0.0",
+                          "prefixLen": 104
+                        },
+                        {
+                          "addressPrefix": "::1",
+                          "prefixLen": 128
+                        },
+                        {
+                          "addressPrefix": "0.0.0.0",
+                          "prefixLen": 32
+                        },
+                        {
+                          "addressPrefix": "::ffff:0.0.0.0",
+                          "prefixLen": 128
+                        },
+                        {
+                          "addressPrefix": "::",
+                          "prefixLen": 128
+                        },
+                        {
+                          "addressPrefix": "169.254.0.0",
+                          "prefixLen": 16
+                        },
+                        {
+                          "addressPrefix": "::ffff:169.254.0.0",
+                          "prefixLen": 112
+                        },
+                        {
+                          "addressPrefix": "fe80::",
+                          "prefixLen": 10
+                        }
+                      ]
+                    }
+                  },
+                  "portValue": 443
+                }
+              },
+              {
+                "name": "agentio.local_tcp_decision",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "agentio.tcp.original_destination_decision",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.tcp.original_destination_decision:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "skipIfEmpty": true,
+                      "factoryKey": "envoy.string"
+                    }
+                  ]
+                }
+              },
+              {
+                "name": "envoy.filters.network.tcp_proxy",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+                  "statPrefix": "http_dynamic_forward_proxy",
+                  "cluster": "http_dynamic_forward_proxy",
+                  "idleTimeout": "120s",
+                  "maxDownstreamConnectionDuration": "600s"
+                }
+              }
+            ],
+            "name": "tls-passthrough"
           }
         ],
         "filterChainMatcher": {
@@ -1687,11 +1863,37 @@
                                 "legacy.example.com"
                               ],
                               "onMatch": {
-                                "action": {
-                                  "name": "forward-tcp",
-                                  "typedConfig": {
-                                    "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                    "value": "forward-tcp"
+                                "matcher": {
+                                  "matcherTree": {
+                                    "input": {
+                                      "name": "tcp-decision",
+                                      "typedConfig": {
+                                        "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
+                                        "key": "agentio.tcp.original_destination_decision"
+                                      }
+                                    },
+                                    "exactMatchMap": {
+                                      "map": {
+                                        "allow": {
+                                          "action": {
+                                            "name": "forward-tcp",
+                                            "typedConfig": {
+                                              "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                              "value": "forward-tcp"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "onNoMatch": {
+                                    "action": {
+                                      "name": "tcp-policy-deny",
+                                      "typedConfig": {
+                                        "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                        "value": "tcp-policy-deny"
+                                      }
+                                    }
                                   }
                                 }
                               }
@@ -1723,10 +1925,10 @@
                               },
                               "passthrough": {
                                 "action": {
-                                  "name": "forward-tcp",
+                                  "name": "tls-passthrough",
                                   "typedConfig": {
                                     "@type": "type.googleapis.com/google.protobuf.StringValue",
-                                    "value": "forward-tcp"
+                                    "value": "tls-passthrough"
                                   }
                                 }
                               },
@@ -1736,6 +1938,41 @@
                                   "typedConfig": {
                                     "@type": "type.googleapis.com/google.protobuf.StringValue",
                                     "value": "tls-terminate"
+                                  }
+                                }
+                              },
+                              "fallthrough": {
+                                "matcher": {
+                                  "matcherTree": {
+                                    "input": {
+                                      "name": "tcp-decision",
+                                      "typedConfig": {
+                                        "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
+                                        "key": "agentio.tcp.original_destination_decision"
+                                      }
+                                    },
+                                    "exactMatchMap": {
+                                      "map": {
+                                        "allow": {
+                                          "action": {
+                                            "name": "forward-tcp",
+                                            "typedConfig": {
+                                              "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                              "value": "forward-tcp"
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  },
+                                  "onNoMatch": {
+                                    "action": {
+                                      "name": "tcp-policy-deny",
+                                      "typedConfig": {
+                                        "@type": "type.googleapis.com/google.protobuf.StringValue",
+                                        "value": "tcp-policy-deny"
+                                      }
+                                    }
                                   }
                                 }
                               }
@@ -1800,11 +2037,37 @@
                 }
               },
               "onNoMatch": {
-                "action": {
-                  "name": "forward-tcp",
-                  "typedConfig": {
-                    "@type": "type.googleapis.com/google.protobuf.StringValue",
-                    "value": "forward-tcp"
+                "matcher": {
+                  "matcherTree": {
+                    "input": {
+                      "name": "tcp-decision",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
+                        "key": "agentio.tcp.original_destination_decision"
+                      }
+                    },
+                    "exactMatchMap": {
+                      "map": {
+                        "allow": {
+                          "action": {
+                            "name": "forward-tcp",
+                            "typedConfig": {
+                              "@type": "type.googleapis.com/google.protobuf.StringValue",
+                              "value": "forward-tcp"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "onNoMatch": {
+                    "action": {
+                      "name": "tcp-policy-deny",
+                      "typedConfig": {
+                        "@type": "type.googleapis.com/google.protobuf.StringValue",
+                        "value": "tcp-policy-deny"
+                      }
+                    }
                   }
                 }
               }
@@ -1852,7 +2115,8 @@
         ],
         "listenerFiltersTimeout": "1s",
         "trafficDirection": "INBOUND",
-        "internalListener": {}
+        "internalListener": {},
+        "continueOnListenerFiltersTimeout": true
       }
     },
     {
@@ -1863,6 +2127,25 @@
         "filterChains": [
           {
             "filters": [
+              {
+                "name": "agentio.local_tcp_decision",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "agentio.tcp.original_destination_decision",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.tcp.original_destination_decision:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "skipIfEmpty": true,
+                      "factoryKey": "envoy.string"
+                    }
+                  ]
+                }
+              },
               {
                 "name": "envoy.filters.network.http_connection_manager",
                 "typedConfig": {
@@ -1897,12 +2180,12 @@
                               "condition": {
                                 "id": "15",
                                 "callExpr": {
-                                  "function": "_\u0026\u0026_",
+                                  "function": "_&&_",
                                   "args": [
                                     {
                                       "id": "8",
                                       "callExpr": {
-                                        "function": "_\u0026\u0026_",
+                                        "function": "_&&_",
                                         "args": [
                                           {
                                             "id": "3",
@@ -1956,7 +2239,7 @@
                                     {
                                       "id": "29",
                                       "callExpr": {
-                                        "function": "_\u0026\u0026_",
+                                        "function": "_&&_",
                                         "args": [
                                           {
                                             "id": "13",
@@ -2370,6 +2653,25 @@
                 }
               },
               {
+                "name": "agentio.local_tcp_decision",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.set_filter_state.v3.Config",
+                  "onNewConnection": [
+                    {
+                      "objectKey": "agentio.tcp.original_destination_decision",
+                      "formatString": {
+                        "textFormatSource": {
+                          "inlineString": "%FILTER_STATE(agentio.tcp.original_destination_decision:PLAIN)%"
+                        },
+                        "omitEmptyValues": true
+                      },
+                      "skipIfEmpty": true,
+                      "factoryKey": "envoy.string"
+                    }
+                  ]
+                }
+              },
+              {
                 "name": "envoy.filters.network.tcp_proxy",
                 "typedConfig": {
                   "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
@@ -2381,6 +2683,21 @@
               }
             ],
             "name": "forward-tcp"
+          },
+          {
+            "filters": [
+              {
+                "name": "envoy.filters.network.tcp_proxy",
+                "typedConfig": {
+                  "@type": "type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy",
+                  "statPrefix": "BlackHoleCluster",
+                  "cluster": "BlackHoleCluster",
+                  "idleTimeout": "120s",
+                  "maxDownstreamConnectionDuration": "600s"
+                }
+              }
+            ],
+            "name": "tcp-policy-deny"
           }
         ],
         "filterChainMatcher": {
@@ -2424,11 +2741,37 @@
             }
           },
           "onNoMatch": {
-            "action": {
-              "name": "forward-tcp",
-              "typedConfig": {
-                "@type": "type.googleapis.com/google.protobuf.StringValue",
-                "value": "forward-tcp"
+            "matcher": {
+              "matcherTree": {
+                "input": {
+                  "name": "tcp-decision",
+                  "typedConfig": {
+                    "@type": "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.FilterStateInput",
+                    "key": "agentio.tcp.original_destination_decision"
+                  }
+                },
+                "exactMatchMap": {
+                  "map": {
+                    "allow": {
+                      "action": {
+                        "name": "forward-tcp",
+                        "typedConfig": {
+                          "@type": "type.googleapis.com/google.protobuf.StringValue",
+                          "value": "forward-tcp"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "onNoMatch": {
+                "action": {
+                  "name": "tcp-policy-deny",
+                  "typedConfig": {
+                    "@type": "type.googleapis.com/google.protobuf.StringValue",
+                    "value": "tcp-policy-deny"
+                  }
+                }
               }
             }
           }
@@ -2449,7 +2792,8 @@
         ],
         "listenerFiltersTimeout": "1s",
         "trafficDirection": "INBOUND",
-        "internalListener": {}
+        "internalListener": {},
+        "continueOnListenerFiltersTimeout": true
       }
     }
   ]

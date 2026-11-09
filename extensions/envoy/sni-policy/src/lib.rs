@@ -137,9 +137,9 @@ mod tests {
             (
                 Some(POLICY),
                 Some(b"example.org".as_slice()),
-                Action::Passthrough,
+                Action::Fallthrough,
             ),
-            (Some(POLICY), None, Action::Passthrough),
+            (Some(POLICY), None, Action::Fallthrough),
             (
                 Some(br#"{"rules":[{"match":{"sni":["*"],"ports":[8443]},"action":"SNI_ACTION_DENY"}]}"#.as_slice()),
                 Some(b"api.example.com".as_slice()),
@@ -148,7 +148,7 @@ mod tests {
             (
                 Some(br#"{"rules":[{"match":{"sni":["*"],"ports":[443]},"action":"SNI_ACTION_DENY"}]}"#.as_slice()),
                 Some(b"api.example.com".as_slice()),
-                Action::Passthrough,
+                Action::Fallthrough,
             ),
             (
                 Some(POLICY),
@@ -158,7 +158,7 @@ mod tests {
             (
                 Some(b"{}".as_slice()),
                 Some(b"api.example.com".as_slice()),
-                Action::Passthrough,
+                Action::Fallthrough,
             ),
             (
                 Some(b"not-json".as_slice()),

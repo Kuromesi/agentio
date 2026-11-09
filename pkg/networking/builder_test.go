@@ -137,6 +137,7 @@ func TestBuildProducesProductionGatewayGraph(t *testing.T) {
 		"agentio.connect_authority",
 		"envoy.filters.http.ext_proc",
 		"agentio.connect_workload",
+		"agentio.connect_tcp_decision",
 		"agentio.connect_sni_policy",
 		"envoy.filters.http.local_ratelimit",
 		concurrencyFilterName, bandwidthFilterName,

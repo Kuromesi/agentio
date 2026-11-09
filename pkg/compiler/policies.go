@@ -113,9 +113,13 @@ func newPolicyCollections(
 					current := inputs.SecurityProfiles.GetKey(profile.ResourceName())
 					return current != nil && current.Equals(profile)
 				})
-				// Retain binding metadata and SNI together on invalid updates.
+				// Retain the last good profile; first failures keep only binding metadata.
 				ctx.DiscardResult()
-				return nil
+				attachment, bindingErr := policy.SecurityProfileAttachment(profile)
+				if bindingErr != nil {
+					return nil
+				}
+				return &policy.CompiledSecurityProfile{Name: profile.ResourceName(), Attachment: attachment}
 			}
 			failures.clear("SecurityProfile", profile.ResourceName())
 			return compiled

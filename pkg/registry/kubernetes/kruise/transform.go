@@ -116,9 +116,11 @@ func newSandboxes(
 				attester = &model.Attester{WorkloadUID: podsource.WorkloadUID(clusterID, pod)}
 			}
 			var policies *model.SandboxPolicies
-			if sandbox.Annotations[agentsv1alpha1.AnnotationSecurityRules] != "" {
+			if HasSecurityRules(sandbox) {
 				rules, err := sandboxSecurityRules(sandbox)
-				policies = &model.SandboxPolicies{SecurityRules: rules}
+				tcpRules, tcpErr := SandboxTCPRules(sandbox)
+				err = errors.Join(err, tcpErr)
+				policies = &model.SandboxPolicies{SecurityRules: rules, TCPRules: tcpRules}
 				if err != nil {
 					policies.InputError = err.Error()
 				}
@@ -191,4 +193,32 @@ func OwnsPod(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// HasSecurityRules includes either half of the inline SecurityProfile.
+func HasSecurityRules(sandbox metav1.Object) bool {
+	annotations := sandbox.GetAnnotations()
+	return annotations[agentsv1alpha1.AnnotationSecurityRules] != "" ||
+		annotations[agentsv1alpha1.AnnotationTCPRules] != ""
+}
+
+// SandboxTCPRules decodes the trusted manager annotation, rejecting schema drift.
+func SandboxTCPRules(sandbox metav1.Object) ([]agentsv1alpha1.TCPRule, error) {
+	raw := sandbox.GetAnnotations()[agentsv1alpha1.AnnotationTCPRules]
+	if raw == "" {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var rules []agentsv1alpha1.TCPRule
+	if err := decoder.Decode(&rules); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", agentsv1alpha1.AnnotationTCPRules, err)
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("%s must contain a single JSON array", agentsv1alpha1.AnnotationTCPRules)
+	}
+	if rules == nil {
+		return nil, fmt.Errorf("%s must be an array", agentsv1alpha1.AnnotationTCPRules)
+	}
+	return rules, nil
 }

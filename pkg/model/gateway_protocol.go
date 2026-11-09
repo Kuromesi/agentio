@@ -34,7 +34,8 @@ const (
 	FilterStatePeerPrincipal     = "agentio.peer.principal"
 	FilterStateLocalPrincipal    = "agentio.local.principal"
 	// FilterStateSNIPolicy must match POLICY_KEY in extensions/envoy/sni-policy.
-	FilterStateSNIPolicy = "agentio.sni.policy"
+	FilterStateSNIPolicy   = "agentio.sni.policy"
+	FilterStateTCPDecision = "agentio.tcp.original_destination_decision"
 	// FilterStateRouteUpstream holds the gateway-selected IP:port for this request.
 	FilterStateRouteUpstream = "agentio.route.upstream"
 )

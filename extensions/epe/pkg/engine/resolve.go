@@ -32,7 +32,8 @@ import (
 // to carry — attribution never has to survive a round trip through an untyped
 // map to reach the one component that reads it.
 type Resolution struct {
-	Units []Unit
+	DestinationAuthorizer filter.DestinationAuthorizer
+	Units                 []Unit
 	// StreamLogger, when non-nil, is invoked once at stream end under the
 	// same contract as the statically registered loggers: exactly once, at
 	// true stream end including abnormal termination, and it must not block.

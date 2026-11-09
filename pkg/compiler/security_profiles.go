@@ -52,10 +52,15 @@ func newSecurityProfileResources(
 	return krt.NewCollection(
 		profiles,
 		func(ctx krt.HandlerContext, profile policy.CompiledSecurityProfile) *model.Resource {
+			if profile.TCPPolicy == nil {
+				return nil
+			}
 			payload, err := securityProfilePayload(&securityv1.SecurityProfile{
 				Name:      profile.Attachment.SourceName,
 				Namespace: profile.Attachment.SourceNamespace,
 				Uid:       profile.Attachment.UID,
+				SniPolicy: policy.ProjectSNIPolicy(profile.SNIPolicy),
+				TcpPolicy: profile.TCPPolicy,
 			}, &profile.Spec)
 			if err == nil {
 				value, marshalErr := marshalDeterministicAny(payload)

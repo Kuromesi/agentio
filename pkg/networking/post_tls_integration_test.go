@@ -48,6 +48,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 	"github.com/openkruise/agentio/pkg/features"
+	"github.com/openkruise/agentio/pkg/model"
 	"github.com/openkruise/agentio/pkg/security/pki"
 )
 
@@ -359,7 +360,8 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 	manager.RouteSpecifier = &hcm.HttpConnectionManager_RouteConfig{
 		RouteConfig: b.buildForwardRoute(TLSConnectOriginate, config.gateway),
 	}
-	findFilterChain(t, forward, forwardHTTPChain).Filters[0] = networkFilter(
+	httpChain := findFilterChain(t, forward, forwardHTTPChain)
+	httpChain.Filters[len(httpChain.Filters)-1] = networkFilter(
 		"envoy.filters.network.http_connection_manager",
 		b.pack(manager),
 	)
@@ -386,6 +388,12 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 			OnNewConnection: []*common.FilterStateValue{{
 				Key:   &common.FilterStateValue_ObjectKey{ObjectKey: "envoy.filters.listener.original_dst.local_ip"},
 				Value: &common.FilterStateValue_FormatString{FormatString: formatString(upstream)},
+			}, {
+				Key:                &common.FilterStateValue_ObjectKey{ObjectKey: model.FilterStateTCPDecision},
+				FactoryKey:         "envoy.hashable_string",
+				Value:              &common.FilterStateValue_FormatString{FormatString: formatString("allow")},
+				SharedWithUpstream: common.FilterStateValue_TRANSITIVE,
+				ReadOnly:           true,
 			}},
 		}))},
 		chain.Filters...)
@@ -410,6 +418,7 @@ func startPostTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Is
 			}},
 			Clusters: []*cluster.Cluster{
 				b.buildInternalCluster(MainForward),
+				buildBlackHoleCluster(),
 				b.buildTLSProxyOriginateCluster(nil),
 				b.buildDFPCluster(TLSConnectOriginate, false, true, nil),
 			},

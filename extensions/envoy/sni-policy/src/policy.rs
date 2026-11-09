@@ -14,6 +14,8 @@ pub enum Action {
     Deny,
     #[serde(skip)]
     Cleartext,
+    #[serde(skip)]
+    Fallthrough,
 }
 
 impl Action {
@@ -23,6 +25,7 @@ impl Action {
             Self::Passthrough => b"passthrough",
             Self::Deny => b"deny",
             Self::Cleartext => b"cleartext",
+            Self::Fallthrough => b"fallthrough",
         }
     }
 }
@@ -77,7 +80,7 @@ impl Policy {
                 (r.r#match.ports.is_empty() || port.is_some_and(|p| r.r#match.ports.contains(&p)))
                     && r.r#match.sni.iter().any(|p| pattern_matches(p, name))
             })
-            .map_or(Action::Passthrough, |r| r.action)
+            .map_or(Action::Fallthrough, |r| r.action)
     }
 }
 
@@ -137,15 +140,15 @@ mod tests {
             ("example.com", Action::Deny),
             ("badexample.com", Action::Deny),
             ("example.com.evil", Action::Deny),
-            ("", Action::Passthrough),
+            ("", Action::Fallthrough),
         ] {
             assert_eq!(policy.evaluate(Some(name), None), want, "{name}");
         }
-        assert_eq!(policy.evaluate(None, None), Action::Passthrough);
+        assert_eq!(policy.evaluate(None, None), Action::Fallthrough);
     }
 
     #[test]
-    fn explicit_empty_and_no_match_pass_through() {
+    fn empty_and_no_match_fall_through() {
         for json in [
             "{}",
             r#"{"rules":[]}"#,
@@ -154,7 +157,7 @@ mod tests {
             let policy: Policy = serde_json::from_str(json).unwrap();
             assert_eq!(
                 policy.evaluate(Some("different.test"), None),
-                Action::Passthrough
+                Action::Fallthrough
             );
         }
     }
@@ -173,7 +176,7 @@ mod tests {
             (Some("api.example.com"), Some(443), Action::Terminate),
             (Some("api.example.com"), Some(8443), Action::Deny),
             (Some("api.example.com"), None, Action::Deny),
-            (None, Some(443), Action::Passthrough),
+            (None, Some(443), Action::Fallthrough),
         ] {
             assert_eq!(policy.evaluate(name, port), want, "{name:?}:{port:?}");
         }

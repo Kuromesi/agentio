@@ -155,7 +155,7 @@ func TestStaticSNIOverlapExcludesWin(t *testing.T) {
 			t.Fatal(domains)
 		}
 		if !reflect.DeepEqual(domains.DomainMatchers[0].Domains, []string{"same.test", "*.overlap.test"}) ||
-			domains.DomainMatchers[0].OnMatch.GetAction().GetName() != forwardTCPChain {
+			tcpAllowedChain(t, domains.DomainMatchers[0].OnMatch) != forwardTCPChain {
 			t.Fatal(domains)
 		}
 		if !reflect.DeepEqual(domains.DomainMatchers[1].Domains, []string{"include.test"}) ||

@@ -54,7 +54,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/metrics"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/profilestore"
 	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
-	"github.com/openkruise/agentio/extensions/epe/pkg/policy/trafficpolicy"
+	workloadpolicy "github.com/openkruise/agentio/extensions/epe/pkg/policy/workload"
 	"github.com/openkruise/agentio/extensions/epe/pkg/runnable"
 	runserver "github.com/openkruise/agentio/extensions/epe/pkg/server"
 	resourcestore "github.com/openkruise/agentio/extensions/epe/pkg/store"
@@ -330,17 +330,13 @@ func run() error {
 	resourceStore := resourcestore.NewAggregate(nativeStore)
 	metrics.Registry.MustRegister(prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "agentio_epe_demand_cache_entries",
-		Help: "Retained Workload, TrafficPolicy, SecurityProfile and Sandbox subscriptions, including active resolutions.",
+		Help: "Retained Workload, SecurityProfile and Sandbox subscriptions, including active resolutions.",
 	}, func() float64 { return float64(nativeStore.CacheEntries()) }))
-	trafficpolicy.RegisterQueries(resourceStore, *xdsClusterID)
+	workloadpolicy.RegisterQueries(resourceStore, *xdsClusterID)
 	group.Add(runnable.Func(nativeStore.Run))
 	group.Add(runnable.Func(resourceStore.Run))
 	group.Add(runnable.Func(xds.Run))
-	var authorizationResources *resourcestore.Aggregate
-	if *enableXDSEgressAuthz {
-		authorizationResources = resourceStore
-	}
-	authorize, authorizationReg := newRequestAuthorizer(configs, authorizationResources, dns.NewClient(nil, 0))
+	authorize, authorizationReg := newRequestAuthorizer(configs, dns.NewClient(nil, 0))
 	var profileStore profilestore.Store
 	var matcher securityprofile.Matcher
 	var profileReg krt.HandlerRegistration
@@ -434,7 +430,7 @@ func run() error {
 		CertProvider:                servingTLS.Provider,
 		RequireClientCert:           servingTLS.RequireClientCert,
 		Resolve:                     resolve,
-		ResolveContext:              trafficpolicy.NewContextResolver(resourceStore, *enableXDSEgressAuthz),
+		ResolveContext:              workloadpolicy.NewContextResolver(resourceStore),
 		AuditLogger:                 auditLogger,
 		Registrations:               registrations,
 	}, ctrllog.Log.WithName("ext-proc"))

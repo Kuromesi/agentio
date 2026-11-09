@@ -1,0 +1,32 @@
+// Copyright 2026 The Kruise Authors
+// SPDX-License-Identifier: Apache-2.0
+syntax = "proto3";
+package agentio.security;
+option go_package = "github.com/openkruise/agentio/api/security/v1;securityv1";
+
+message SNIPolicy {
+  // Evaluated in the order produced by the control plane.
+  repeated SniRule rules = 1;
+}
+
+message SniRule {
+  SniMatch match = 1;
+  SniAction action = 2;
+}
+
+message SniMatch {
+  // Values are ORed. Supported forms are exact names, a leading wildcard,
+  // and "*" for any non-empty SNI.
+  repeated string sni = 1;
+
+  // Original destination ports are ORed and ANDed with SNI. Empty means any
+  // port; a missing destination port never matches a non-empty list.
+  repeated uint32 ports = 2;
+}
+
+enum SniAction {
+  SNI_ACTION_UNSPECIFIED = 0;
+  SNI_ACTION_TLS_TERMINATION = 1;
+  SNI_ACTION_PASSTHROUGH = 2;
+  SNI_ACTION_DENY = 3;
+}

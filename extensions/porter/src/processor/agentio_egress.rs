@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{
     metrics::{ConnectResult, Metrics, Protocol},
-    traffic::Target,
     view::{self, View},
     wire::extproc,
 };
@@ -18,7 +17,6 @@ use crate::{
 pub(super) fn parse<'a>(
     request_headers: Option<&extproc::HttpHeaders>,
     attributes: Option<&'a prost_types::Struct>,
-    enforce_policy: bool,
 ) -> Result<ParsedRequest<'a>, Status> {
     let headers = headers(request_headers)?;
     let udp = headers.method == "GET" && headers.upgrade.eq_ignore_ascii_case("connect-udp");
@@ -27,12 +25,18 @@ pub(super) fn parse<'a>(
             "unexpected method or missing request authority",
         ));
     }
-    let target = if enforce_policy {
-        Some(Target::parse(&headers.authority, udp).map_err(|error| {
-            Status::invalid_argument(format!("invalid CONNECT target: {error}"))
-        })?)
-    } else {
+    let target = if udp {
         None
+    } else {
+        let mut target: std::net::SocketAddr = headers
+            .authority
+            .parse()
+            .map_err(|_| Status::invalid_argument("CONNECT target must be numeric IP:port"))?;
+        if target.port() == 0 {
+            return Err(Status::invalid_argument("invalid CONNECT port"));
+        }
+        target.set_ip(target.ip().to_canonical());
+        Some(target)
     };
     Ok(ParsedRequest {
         resolution: ResolveRequest {
@@ -58,18 +62,31 @@ pub(super) fn encode(
             view::object([("id".into(), view::string(&sandbox.uid))]),
         );
     }
+    if let Some(allow) = resolved.tcp_decision {
+        metadata.insert(
+            "tcp".into(),
+            view::object([(
+                "original_destination_decision".into(),
+                view::string(if allow { "allow" } else { "deny" }),
+            )]),
+        );
+    }
     if enable_sni_traffic_policy && protocol == "tcp" {
         let mut rules = Vec::new();
+        for profile in &resolved.profiles {
+            let View::SecurityProfile(profile) = profile.as_ref() else {
+                unreachable!("typed SecurityProfile watch")
+            };
+            rules.extend(view::project_rules(&profile.rules));
+        }
         if let Some(sandbox) = &resolved.sandbox {
             let View::Sandbox(sandbox) = sandbox.as_ref() else {
                 unreachable!("typed Sandbox watch")
             };
-            rules.extend(view::project_rules(&sandbox.rules));
+            if let Some(profile) = &sandbox.profile {
+                rules.extend(view::project_rules(&profile.rules));
+            }
         }
-        let View::Workload(workload) = resolved.workload.as_ref() else {
-            unreachable!("typed Workload watch")
-        };
-        rules.extend(view::project_rules(&workload.rules));
         let policy = if rules.is_empty() {
             view::object([])
         } else {

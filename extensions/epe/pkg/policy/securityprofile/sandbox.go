@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/openkruise/agentio/pkg/model"
+	"github.com/openkruise/agentio/pkg/policy"
 	"github.com/openkruise/agentio/pkg/registry/kubernetes/kruise"
 
 	v1alpha1 "github.com/openkruise/agents-api/agents/v1alpha1"
@@ -58,17 +59,27 @@ const AnnotationSecurityRules = "agents.kruise.io/security-rules"
 // schema, which must not degrade into silently dropped rules.
 func NewSandboxProfile(sandbox metav1.Object) (*Profile, error) {
 	raw := sandbox.GetAnnotations()[AnnotationSecurityRules]
-	if raw == "" {
+	if !kruise.HasSecurityRules(sandbox) {
 		return nil, nil
 	}
-	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
-	dec.DisallowUnknownFields()
 	var specRules []v1alpha1.SecurityRule
-	if err := dec.Decode(&specRules); err != nil {
-		return nil, fmt.Errorf("decode %s annotation: %w", AnnotationSecurityRules, err)
+	if raw != "" {
+		dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&specRules); err != nil {
+			return nil, fmt.Errorf("decode %s annotation: %w", AnnotationSecurityRules, err)
+		}
+		if len(specRules) == 0 {
+			return nil, fmt.Errorf("%s annotation contains no rules", AnnotationSecurityRules)
+		}
 	}
-	if len(specRules) == 0 {
-		return nil, fmt.Errorf("%s annotation contains no rules", AnnotationSecurityRules)
+	tcpRules, err := kruise.SandboxTCPRules(sandbox)
+	if err != nil {
+		return nil, err
+	}
+	tcp, err := policy.CompileTCPRules(tcpRules)
+	if err != nil {
+		return nil, err
 	}
 	for i := range specRules {
 		escapeSandboxHeaderValues(specRules[i].Actions.HeaderManipulation)
@@ -88,9 +99,11 @@ func NewSandboxProfile(sandbox metav1.Object) (*Profile, error) {
 			Version:           sandbox.GetResourceVersion(),
 			Match:             MatchSandbox,
 		},
-		Selector:        labels.Nothing(),
-		RawSandboxRules: raw,
-		Rules:           rules,
+		Selector:           labels.Nothing(),
+		RawSandboxRules:    raw,
+		RawSandboxTCPRules: sandbox.GetAnnotations()[v1alpha1.AnnotationTCPRules],
+		TCPPolicy:          tcp,
+		Rules:              rules,
 	}, nil
 }
 

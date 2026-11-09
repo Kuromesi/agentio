@@ -22,8 +22,7 @@ import (
 	"github.com/openkruise/agentio/extensions/epe/pkg/engine"
 	"github.com/openkruise/agentio/extensions/epe/pkg/extensionprovider"
 	"github.com/openkruise/agentio/extensions/epe/pkg/filters/egressauthz"
-	"github.com/openkruise/agentio/extensions/epe/pkg/policy/trafficpolicy"
-	resourcestore "github.com/openkruise/agentio/extensions/epe/pkg/store"
+	"github.com/openkruise/agentio/extensions/epe/pkg/policy/securityprofile"
 	"github.com/openkruise/agentio/pkg/config"
 	"github.com/openkruise/agentio/pkg/dns"
 	"github.com/openkruise/agentio/pkg/krt"
@@ -44,7 +43,6 @@ func validateEPEConfig(cfg *configv1.EPEConfig) error {
 
 func newRequestAuthorizer(
 	configs krt.Collection[config.Config[*configv1.EPEConfig]],
-	resources *resourcestore.Aggregate,
 	client *dns.Client,
 ) (engine.RequestAuthorizer, krt.HandlerRegistration) {
 	global := egressauthz.NewStaticAuthorizer(egressauthz.Config{})
@@ -56,10 +54,6 @@ func newRequestAuthorizer(
 		}
 		global.Update(cfg)
 	})
-	authorizers := []egressauthz.Authorizer{global}
-	if resources != nil {
-		authorizers = append(authorizers, trafficpolicy.NewAuthorizer())
-	}
 	// Serving waits for reg to sync, so the first request sees the configured restrictions.
-	return egressauthz.NewAggregate(client, authorizers...).Authorize, reg
+	return egressauthz.NewAggregate(client, global, securityprofile.NewAuthorizer()).Authorize, reg
 }

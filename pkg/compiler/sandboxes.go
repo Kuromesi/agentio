@@ -95,10 +95,14 @@ func compileSandbox(
 			}
 			result.Payload.TrafficPolicy = traffic
 		}
-		if policies.SecurityRules != nil {
+		if policies.SecurityRules != nil || policies.TCPRules != nil {
 			sni, err := policy.CompileSNIRules(policies.SecurityRules)
 			if err != nil {
 				return nil, fmt.Errorf("sandbox security rules: %w", err)
+			}
+			tcp, err := policy.CompileTCPRules(policies.TCPRules)
+			if err != nil {
+				return nil, fmt.Errorf("sandbox TCP rules: %w", err)
 			}
 			name := sandbox.Name
 			if name == "" {
@@ -108,6 +112,8 @@ func compileSandbox(
 				Name:      name,
 				Namespace: sandbox.Namespace,
 				Uid:       sandbox.SourceIdentity.UID,
+				SniPolicy: policy.ProjectSNIPolicy(sni),
+				TcpPolicy: tcp,
 			}, &agentsv1alpha1.SecurityProfileSpec{Rules: policies.SecurityRules})
 			if err != nil {
 				return nil, err
