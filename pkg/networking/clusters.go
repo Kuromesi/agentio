@@ -359,9 +359,29 @@ func (b *resourceBuilder) buildExtProcCluster(provider *configv1.ExtProcProvider
 }
 
 func (b *resourceBuilder) dnsCacheConfig() *dfpcommonv3.DnsCacheConfig {
-	config := &dfpcommonv3.DnsCacheConfig{Name: DNSCacheName, DnsLookupFamily: clusterv3.Cluster_V4_ONLY}
-	// Legacy gateways keep their frozen wire contract and may run an Envoy
-	// version without resolved_address_filter support.
+	config := &dfpcommonv3.DnsCacheConfig{
+		Name:            DNSCacheName,
+		DnsLookupFamily: clusterv3.Cluster_V4_ONLY,
+		MaxHosts:        wrapperspb.UInt32(16384),
+		DnsCacheCircuitBreaker: &dfpcommonv3.DnsCacheCircuitBreakers{
+			MaxPendingRequests: wrapperspb.UInt32(4096),
+		},
+		HostTtl: durationpb.New(2 * time.Minute),
+	}
+	if settings := b.dnsCacheSettings; settings != nil {
+		if settings.MaxHosts != nil {
+			config.MaxHosts = wrapperspb.UInt32(settings.GetMaxHosts())
+		}
+		if settings.MaxPendingRequests != nil {
+			config.DnsCacheCircuitBreaker = &dfpcommonv3.DnsCacheCircuitBreakers{
+				MaxPendingRequests: wrapperspb.UInt32(settings.GetMaxPendingRequests()),
+			}
+		}
+		if settings.GetHostTtl() != nil {
+			config.HostTtl = settings.GetHostTtl()
+		}
+	}
+	// Legacy gateways may run an Envoy version without resolved_address_filter support.
 	if b.legacyGateway {
 		return config
 	}

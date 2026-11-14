@@ -170,6 +170,7 @@ func BuildGateway(inputs Inputs) (*GatewayCompilation, error) {
 		legacyGateway:       inputs.LegacyGateway,
 		upstreamTrustBundle: inputs.UpstreamTrustBundle,
 		egressAuthorization: inputs.EgressAuthorization,
+		dnsCacheSettings:    inputs.Gateway.Config.GetDnsCache(),
 	}
 	clusters, err := b.clusters(effective)
 	if err != nil {

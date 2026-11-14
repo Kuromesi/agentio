@@ -36,6 +36,7 @@ type resourceBuilder struct {
 	legacyGateway       bool
 	upstreamTrustBundle string
 	egressAuthorization *configv1.EgressAuthorization
+	dnsCacheSettings    *configv1.DnsCacheSettings
 	extensions          []*corev3.TypedExtensionConfig
 	err                 error
 }
