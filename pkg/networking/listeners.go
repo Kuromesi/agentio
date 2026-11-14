@@ -247,9 +247,6 @@ func buildOuterTLSIdentityFilter(key string) *listenerv3.Filter {
 			},
 		},
 	}
-	if key == outerSNIKey {
-		config.OnNewConnection = append(config.OnNewConnection, tlsDestinationState("%FILTER_STATE("+key+":PLAIN)%")...)
-	}
 	return networkFilter("envoy.filters.network.set_filter_state", mustPack(config))
 }
 
@@ -354,12 +351,16 @@ func (b *resourceBuilder) buildListeners(config effectiveConfig, trustDomain str
 	if features.EnableSNITrafficPolicy && !b.legacyGateway {
 		mainInternal.ListenerFilters = append(
 			append([]*listenerv3.ListenerFilter{}, inspectorsHTTPFirst...),
-			sniPolicyListenerFilter(),
+			b.sniPolicyListenerFilter(config.gateway.GetTlsTermination().GetExcludeHosts()),
 		)
 	}
 	tcpForwardFilters := []*listenerv3.Filter{tcpTLSIdentityFilter}
 	if !b.legacyGateway {
-		tcpForwardFilters = append(tcpForwardFilters, b.tcpPolicyFilter(true, false), b.sniDFPFilter())
+		tcpForwardFilters = append(tcpForwardFilters,
+			networkFilter("agentio.tcp_destination", b.pack(&setstatenetworkv3.Config{
+				OnNewConnection: tlsDestinationState("%FILTER_STATE(" + outerSNIKey + ":PLAIN)%"),
+			})),
+			b.tcpPolicyFilter(tcpDynamicForward), b.sniDFPFilter())
 	}
 	mainForward := &listenerv3.Listener{
 		Name: MainForward,
@@ -1100,7 +1101,7 @@ func buildRelayDownstreamFilter(factory, peerPrincipal, localPrincipal string) *
 		for _, key := range []string{
 			model.FilterStateSandboxID, "sandbox.token", "agentio.sandbox.metadata",
 			model.FilterStateWorkloadName, model.FilterStateWorkloadNamespace,
-			model.FilterStateWorkloadUID, model.FilterStateConnectionPolicyHash, model.FilterStatePolicyStart,
+			model.FilterStateWorkloadUID, model.FilterStateConnectionPolicyHash,
 		} {
 			downstreamRelayKeys = append(downstreamRelayKeys, struct {
 				key     string
@@ -1251,7 +1252,7 @@ func (b *resourceBuilder) originalDestinationTCPFilters(
 	tcpSettings *configv1.TcpSettings,
 ) []*listenerv3.Filter {
 	if !b.legacyGateway {
-		prefix = append(prefix, b.tcpPolicyFilter(false, false))
+		prefix = append(prefix, b.tcpPolicyFilter(tcpOriginalDst))
 	}
 	return b.applicationTCPFilters(config, prefix, cluster, tcpSettings)
 }
@@ -1271,15 +1272,15 @@ func (b *resourceBuilder) applicationTCPFilters(
 	return append(result, networkFilter("envoy.filters.network.tcp_proxy", b.pack(tcp)))
 }
 
-// sniTrafficPolicyMatcher preserves gateway exclusions before consulting the
-// listener module decision. Legacy proxies retain their policy-runtime fallback.
+// Native listener decisions already include exclusions. Legacy proxies retain
+// gateway exclusions and their policy-runtime fallback.
 func (b *resourceBuilder) sniTrafficPolicyMatcher(excludeHosts []string, passthrough string) *xdsmatcherv3.Matcher {
 	fallback := b.toChain(sniDenyChain)
 	if b.legacyGateway {
 		fallback = toMatcher(b.legacySNIPolicyMatcher(passthrough))
 	}
 	policy := b.tlsActionMatcher(fallback, passthrough)
-	if len(excludeHosts) == 0 {
+	if !b.legacyGateway || len(excludeHosts) == 0 {
 		return policy
 	}
 	domains := &xdsmatcherv3.ServerNameMatcher{DomainMatchers: []*xdsmatcherv3.ServerNameMatcher_DomainMatcher{{

@@ -63,13 +63,15 @@ def network(resolve_sni=False):
         "envoy.extensions.filters.network.dynamic_modules.v3.DynamicModuleNetworkFilter",
         dynamic_module_config={"name": "envoy_agentio_connection_policy", "do_not_close": True},
         filter_name="envoy_agentio_tcp_policy", filter_config=typed(
-            "google.protobuf.Struct", value={"resolveSni": resolve_sni, "skipMatchedProfile": resolve_sni, "deniedCidrs": []}))}
+            "google.protobuf.Struct", value={"mode": "DYNAMIC_FORWARD" if resolve_sni else "ORIGINAL_DST", "denied_cidrs": []}))}
 
 
 def fixture(port, legacy_port, plain_port, tls_port, cert, key):
     result = config(port, legacy_port, plain_port, tls_port, cert, key)
     resources = result["static_resources"]
     outer, _, inner = resources["listeners"]
+    inner["listener_filters"][-1]["typed_config"]["filter_config"] = typed(
+        "google.protobuf.Struct", value={"exclude_hosts": ["localhost"]})
     hcm = outer["filter_chains"][0]["filters"][0]["typed_config"]
     # The original-destination cluster consumes only the module's pinned numerical address.
     resources["clusters"].append({"name": "pinned", "type": "ORIGINAL_DST",
@@ -105,7 +107,7 @@ def fixture(port, legacy_port, plain_port, tls_port, cert, key):
             "object_key": k, "factory_key": factory, "shared_with_upstream": "ONCE",
             "format_string": {"text_format_source": {"inline_string": f"%FILTER_STATE({k}:PLAIN)%"}}}
             for k, factory in [("envoy.filters.listener.original_dst.local_ip", "envoy.filters.listener.original_dst.local_ip"),
-                               ("agentio.connection.policy_hash", "envoy.hashable_string"), ("agentio.policy.start", "envoy.hashable_string")]])}
+                               ("agentio.connection.policy_hash", "envoy.hashable_string")]])}
     terminal = next(c for c in inner["filter_chains"] if c["name"] == "tls-terminate")
     terminal["filters"] = [relay, {"name": "envoy.filters.network.tcp_proxy", "typed_config": typed(
         "envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy", stat_prefix="post-tls", cluster="post-tls")}]
@@ -221,8 +223,13 @@ def main():
             exercise("empty SNI wildcard deny precedes own TCP allow", [profile("a", [tcp("allow")], sni="deny")], origin=tls_origin, denied=True)
             exercise("empty SNI passthrough skips own TCP deny", [profile("a", [tcp("deny")], sni="passthrough")], origin=tls_origin)
             exercise("empty SNI passthrough retains higher TCP deny", [profile("a", [tcp("deny")]), profile("b", sni="passthrough")], origin=tls_origin, denied=True)
-            exercise("TLS termination preserves policy across listener", [profile("a", [tcp("allow")], sni="tls_termination")], host="localhost", terminate=True)
-            exercise("TLS termination still evaluates own TCP deny", [profile("a", [tcp("deny")], sni="tls_termination")], host="localhost", terminate=True, denied=True)
+            exercise("TLS termination preserves policy across listener", [profile("a", [tcp("allow")], sni="tls_termination")], host="terminate.test", terminate=True)
+            exercise("TLS termination still evaluates own TCP deny", [profile("a", [tcp("deny")], sni="tls_termination")], host="terminate.test", terminate=True, denied=True)
+
+            exercise("excluded SNI cannot override SNI deny", [profile("a", [tcp("allow")], sni="deny")], origin=tls_origin, host="localhost", denied=True)
+            exercise("excluded termination keeps own TCP deny", [profile("a", [tcp("deny")], sni="tls_termination")], origin=tls_origin, host="localhost", denied=True)
+            exercise("excluded termination keeps lower TCP deny", [profile("a", sni="tls_termination"), profile("b", [tcp("deny")])], origin=tls_origin, host="localhost", denied=True)
+            exercise("excluded termination forwards encrypted bytes", [profile("a", [tcp("allow")], sni="tls_termination")], origin=tls_origin, host="localhost")
 
             target = f"127.0.0.1:{persistent.server_address[1]}"
             with connect(port, target, [profile("changing", [tcp("allow")])], True) as old:

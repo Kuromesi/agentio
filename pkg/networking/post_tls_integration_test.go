@@ -486,7 +486,7 @@ func startTLSEnvoy(t *testing.T, binary, upstream string, certificate pki.Issued
 			}},
 			Clusters: []*cluster.Cluster{
 				b.buildInternalCluster(MainForward),
-				b.buildTLSProxyOriginateCluster(nil),
+				b.buildTLSOriginateCluster(TLSProxyOriginate, nil),
 				b.buildDFPCluster(TLSConnectOriginate, false, true, nil),
 				b.buildDFPCluster(TLSPassthrough, true, false, nil),
 			},

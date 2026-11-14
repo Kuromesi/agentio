@@ -22,6 +22,7 @@ import (
 
 	configv1 "github.com/openkruise/agentio/api/config/v1"
 
+	udpatypev1 "github.com/cncf/xds/go/udpa/type/v1"
 	xdsmatcherv3 "github.com/cncf/xds/go/xds/type/matcher/v3"
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 	setstatecommonv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/common/set_filter_state/v3"
@@ -168,5 +169,27 @@ func TestStaticSNIOverlapExcludesWin(t *testing.T) {
 	}
 	if !proto.Equal(config, before) {
 		t.Fatal("input configuration mutated")
+	}
+}
+
+func TestNativeSNIExclusionsArePartOfTheModuleDecision(t *testing.T) {
+	resources := buildGatewayGraph(t, false)
+	listeners := messagesOf(t, resources, model.ListenerType, func() *listenerv3.Listener { return &listenerv3.Listener{} })
+	internal := listeners[MainInternal]
+	module := &udpatypev1.TypedStruct{}
+	if err := internal.ListenerFilters[len(internal.ListenerFilters)-1].GetTypedConfig().UnmarshalTo(module); err != nil {
+		t.Fatal(err)
+	}
+	exclusions := modulePolicy(module).Fields["exclude_hosts"].GetListValue().GetValues()
+	if len(exclusions) != 1 || exclusions[0].GetStringValue() != "legacy.example.com" {
+		t.Fatal("exclusions must reach the SNI module")
+	}
+	decision := routingMatcher(internal).GetMatcherTree().GetExactMatchMap().GetMap()["tls"].GetMatcher()
+	input := &matchinginputv3.FilterStateInput{}
+	if err := decision.GetMatcherTree().GetInput().GetTypedConfig().UnmarshalTo(input); err != nil {
+		t.Fatal(err)
+	}
+	if input.Key != tlsActionKey || decision.GetMatcherTree().GetExactMatchMap().GetMap()["deny"].GetAction().GetName() != sniDenyChain {
+		t.Fatal("routing must consume the module decision without overriding deny")
 	}
 }

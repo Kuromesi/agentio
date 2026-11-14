@@ -19,7 +19,14 @@ import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
 )
 
-func (b *resourceBuilder) tcpPolicyFilter(resolveSNI, skipMatchedProfile bool) *listenerv3.Filter {
+type tcpDestinationMode string
+
+const (
+	tcpOriginalDst    tcpDestinationMode = "ORIGINAL_DST"
+	tcpDynamicForward tcpDestinationMode = "DYNAMIC_FORWARD"
+)
+
+func (b *resourceBuilder) tcpPolicyFilter(mode tcpDestinationMode) *listenerv3.Filter {
 	denied := make([]any, 0)
 	for _, cidr := range b.egressAuthorization.EffectiveDeniedCIDRs() {
 		denied = append(denied, cidr)
@@ -38,9 +45,8 @@ func (b *resourceBuilder) tcpPolicyFilter(resolveSNI, skipMatchedProfile bool) *
 			"filter_config": map[string]any{
 				"@type": "type.googleapis.com/google.protobuf.Struct",
 				"value": map[string]any{
-					"resolveSni":         resolveSNI,
-					"skipMatchedProfile": skipMatchedProfile,
-					"deniedCidrs":        denied,
+					"mode":         string(mode),
+					"denied_cidrs": denied,
 				},
 			},
 		}),

@@ -30,14 +30,14 @@ func TestTCPPolicyRunsBeforeProxy(t *testing.T) {
 	listeners := messagesOf(t, buildCompleteGatewayGraph(t), model.ListenerType,
 		func() *listenerv3.Listener { return &listenerv3.Listener{} })
 	for _, tc := range []struct {
-		listener   string
-		chain      string
-		cluster    string
-		resolveSNI bool
+		listener string
+		chain    string
+		cluster  string
+		mode     tcpDestinationMode
 	}{
-		{MainInternal, forwardTCPChain, PassthroughCluster, false},
-		{MainInternal, forwardTLSChain, TLSPassthrough, true},
-		{MainForward, forwardTCPChain, TLSProxyOriginate, true},
+		{MainInternal, forwardTCPChain, PassthroughCluster, tcpOriginalDst},
+		{MainInternal, forwardTLSChain, TLSPassthrough, tcpDynamicForward},
+		{MainForward, forwardTCPChain, TLSProxyOriginate, tcpDynamicForward},
 	} {
 		t.Run(tc.listener+"/"+tc.chain, func(t *testing.T) {
 			chain := findFilterChain(t, listeners[tc.listener], tc.chain)
@@ -62,11 +62,11 @@ func TestTCPPolicyRunsBeforeProxy(t *testing.T) {
 				t.Fatalf("TCP policy module path = %q", library)
 			}
 			settings := module.Value.GetFields()["filter_config"].GetStructValue().GetFields()["value"].GetStructValue()
-			if settings.GetFields()["resolveSni"].GetBoolValue() != tc.resolveSNI {
-				t.Fatalf("resolveSni=%v, want %v", settings.GetFields()["resolveSni"], tc.resolveSNI)
+			if settings.GetFields()["mode"].GetStringValue() != string(tc.mode) {
+				t.Fatalf("mode=%v, want %v", settings.GetFields()["mode"], tc.mode)
 			}
 			var denied []string
-			for _, cidr := range settings.GetFields()["deniedCidrs"].GetListValue().GetValues() {
+			for _, cidr := range settings.GetFields()["denied_cidrs"].GetListValue().GetValues() {
 				denied = append(denied, cidr.GetStringValue())
 			}
 			if !slices.Equal(denied, configv1.MandatoryEgressDeniedCIDRs()) {

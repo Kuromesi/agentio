@@ -57,7 +57,7 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		b.buildPassthroughCluster(),
 		b.buildDFPCluster(HTTPDynamicForwardProxy, true, false, nil),
 		b.buildDFPCluster(TLSConnectOriginate, false, true, config.gateway.GetTls().GetOrigination()),
-		b.buildTLSProxyOriginateCluster(config.gateway.GetTls().GetOrigination()),
+		b.buildTLSOriginateCluster(TLSProxyOriginate, config.gateway.GetTls().GetOrigination()),
 	}
 	if len(config.gateway.GetTcpPassthrough()) > 0 {
 		result = append(result, b.buildInternalCluster(TCPPassthrough))
@@ -66,6 +66,9 @@ func (b *resourceBuilder) buildClusters(config effectiveConfig) ([]*clusterv3.Cl
 		passthrough := b.buildDFPCluster(TLSPassthrough, true, false, nil)
 		passthrough.TypedExtensionProtocolOptions = nil
 		result = append(result, passthrough)
+		if len(config.gateway.GetServiceEntries()) > 0 {
+			result = append(result, b.buildTLSOriginateCluster(TLSEndpointOriginate, config.gateway.GetTls().GetOrigination()))
+		}
 		cluster := b.buildExtProcCluster(&configv1.ExtProcProvider{Service: "127.0.0.1", Port: 9002}, PorterCluster)
 		cluster.ClusterDiscoveryType = &clusterv3.Cluster_Type{Type: clusterv3.Cluster_STATIC}
 		result = append(result, cluster)
@@ -143,14 +146,14 @@ func (b *resourceBuilder) buildPassthroughCluster() *clusterv3.Cluster {
 
 // Filter state supplies the outer TLS destination and certificate identity for
 // application CONNECT and non-HTTP payloads.
-func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
+func (b *resourceBuilder) buildTLSOriginateCluster(name string, settings *configv1.UpstreamTlsSettings) *clusterv3.Cluster {
 	cluster := b.buildPassthroughCluster()
-	if !b.legacyGateway {
+	if !b.legacyGateway && name == TLSProxyOriginate {
 		// TLS identity is set explicitly; HTTP auto-SNI would use the inner CONNECT authority.
 		cluster = b.buildDFPCluster(TLSProxyOriginate, true, false, nil)
 	}
-	cluster.Name = TLSProxyOriginate
-	cluster.AltStatName = delimitedStatsPrefix(TLSProxyOriginate)
+	cluster.Name = name
+	cluster.AltStatName = delimitedStatsPrefix(name)
 	options := b.pack(&httpupstreamv3.HttpProtocolOptions{
 		CommonHttpProtocolOptions: &corev3.HttpProtocolOptions{IdleTimeout: durationpb.New(upstreamHTTPIdleTimeout)},
 		UpstreamProtocolOptions: &httpupstreamv3.HttpProtocolOptions_AutoConfig{
@@ -161,6 +164,9 @@ func (b *resourceBuilder) buildTLSProxyOriginateCluster(settings *configv1.Upstr
 		},
 	})
 	cluster.TypedExtensionProtocolOptions = map[string]*anypb.Any{httpProtocolOptionsType: options}
+	if name == TLSEndpointOriginate {
+		cluster.TypedExtensionProtocolOptions = nil
+	}
 	// Envoy 1.40+ scopes the default upstream session cache by effective SNI.
 	tlsConfig := b.pack(&tlsv3.UpstreamTlsContext{
 		CommonTlsContext: &tlsv3.CommonTlsContext{

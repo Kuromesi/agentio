@@ -78,15 +78,11 @@ func (b *resourceBuilder) sniForwardFilters(config effectiveConfig, prefix []*li
 	stateName, cluster := "agentio.route_upstream", HTTPDynamicForwardProxy
 	if !b.legacyGateway {
 		stateName, cluster = "envoy.filters.network.set_filter_state", TLSPassthrough
-		values := tlsDestinationState("%REQUESTED_SERVER_NAME%")
-		if len(config.gateway.GetServiceEntries()) > 0 {
-			values = append(values, state.OnNewConnection[1])
-		}
-		state.OnNewConnection = values
+		state.OnNewConnection = tlsDestinationState("%REQUESTED_SERVER_NAME%")
 	}
 	filters := append(slices.Clone(prefix), networkFilter(stateName, b.pack(state)))
 	if !b.legacyGateway {
-		filters = append(filters, b.tcpPolicyFilter(len(prefix) == 0, true))
+		filters = append(filters, b.tcpPolicyFilter(tcpDynamicForward))
 	}
 	filters = append(filters, b.sniDFPFilter())
 	return b.applicationTCPFilters(config, filters, cluster, config.gateway.GetTcp())
@@ -133,28 +129,24 @@ func (b *resourceBuilder) bindServiceEntryEndpoints(
 					Name: name + "|tcp",
 					Filters: b.applicationTCPFilters(config, []*listener.Filter{
 						outerTLSIdentityFilter,
-						networkFilter("agentio.endpoint_upstream", b.pack(&networkstate.Config{
-							OnNewConnection: tlsDestinationState("%DOWNSTREAM_LOCAL_ADDRESS%"),
-						})),
-						b.tcpPolicyFilter(false, false),
-						b.sniDFPFilter(),
-					}, TLSProxyOriginate, config.gateway.GetTcp()),
+						b.tcpPolicyFilter(tcpOriginalDst),
+					}, TLSEndpointOriginate, config.gateway.GetTcp()),
 				})
 				http.OnNoMatch = b.toChain(name + "|tcp")
 			}
 			addresses[ip] = toMatcher(http)
 			continue
 		}
-		pin := networkFilter(
-			"agentio.endpoint_upstream",
-			b.pack(&networkstate.Config{OnNewConnection: []*common.FilterStateValue{
-				serviceEntryTarget(),
-			}}),
-		)
-		l.FilterChains = append(
-			l.FilterChains,
-			&listener.FilterChain{Name: name + "|tls", Filters: b.sniForwardFilters(config, []*listener.Filter{pin})},
-		)
+		var filters []*listener.Filter
+		if b.legacyGateway {
+			pin := networkFilter("agentio.endpoint_upstream", b.pack(&networkstate.Config{
+				OnNewConnection: []*common.FilterStateValue{serviceEntryTarget()},
+			}))
+			filters = b.sniForwardFilters(config, []*listener.Filter{pin})
+		} else {
+			filters = b.originalDestinationTCPFilters(config, nil, PassthroughCluster, config.gateway.GetTcp())
+		}
+		l.FilterChains = append(l.FilterChains, &listener.FilterChain{Name: name + "|tls", Filters: filters})
 		domains := make([]string, 0, len(hosts)*2)
 		for _, host := range hosts {
 			domains = append(domains, host, host+".")

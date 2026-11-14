@@ -277,6 +277,7 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	rawTCP := findFilterChain(t, listeners[MainForward], forwardTCPChain)
 	if got, want := networkFilterNames(rawTCP), []string{
 		"envoy.filters.network.set_filter_state",
+		"agentio.tcp_destination",
 		"agentio.tcp_policy",
 		"envoy.filters.network.sni_dynamic_forward_proxy",
 		"envoy.filters.network.tcp_proxy",
@@ -287,7 +288,6 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 	const (
 		transportProtocolInputType   = "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.TransportProtocolInput"
 		applicationProtocolInputType = "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ApplicationProtocolInput"
-		serverNameInputType          = "type.googleapis.com/envoy.extensions.matching.common_inputs.network.v3.ServerNameInput"
 	)
 	if got := forwardApp.GetMatcherTree().
 		GetInput().
@@ -313,35 +313,13 @@ func TestSupportedGatewayRuntimeInvariants(t *testing.T) {
 		{"MainForward TCP fallback", forwardApp.GetOnNoMatch().GetAction().GetName(), forwardTCPChain},
 	}
 
-	// Gateway exclusions retain precedence over both ztunnel actions and
-	// gateway policy. tls_action_test.go covers the action branch.
+	// The native SNI module normalizes exclusions before publishing its decision.
 	internalMatcher := routingMatcher(listeners[MainInternal])
 	internalTree := internalMatcher.GetMatcherTree()
 	if got := internalTree.GetInput().GetTypedConfig().GetTypeUrl(); got != transportProtocolInputType {
 		t.Errorf("MainInternal outer matcher input = %q, want %q", got, transportProtocolInputType)
 	}
-	excludeMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher()
-	if got := excludeMatcher.GetMatcherTree().GetInput().GetTypedConfig().GetTypeUrl(); got != serverNameInputType {
-		t.Errorf("MainInternal exclusion matcher input = %q, want %q", got, serverNameInputType)
-	}
-	excludes := &xdsmatcherv3.ServerNameMatcher{}
-	if err := excludeMatcher.GetMatcherTree().GetCustomMatch().GetTypedConfig().UnmarshalTo(excludes); err != nil {
-		t.Fatalf("decode MainInternal SNI exclusions: %v", err)
-	}
-	if len(excludes.GetDomainMatchers()) != 1 ||
-		!equalStrings(excludes.GetDomainMatchers()[0].GetDomains(), []string{"legacy.example.com"}) {
-		t.Fatalf("MainInternal SNI exclusions = %+v", excludes.GetDomainMatchers())
-	}
-	decisions = append(decisions, struct {
-		name string
-		got  string
-		want string
-	}{
-		"MainInternal excluded SNI",
-		excludes.GetDomainMatchers()[0].GetOnMatch().GetAction().GetName(),
-		forwardTLSChain,
-	})
-	policyMatcher := excludeMatcher.GetOnNoMatch().GetMatcher()
+	policyMatcher := internalTree.GetExactMatchMap().GetMap()["tls"].GetMatcher()
 	if policyMatcher.GetOnNoMatch().GetAction().GetName() != sniDenyChain {
 		t.Fatal("missing native module output must deny")
 	}

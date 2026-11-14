@@ -481,11 +481,11 @@ func TestPostTLSForwardingUsesOuterSNI(t *testing.T) {
 		if !legacy {
 			wantFilters = []string{
 				"envoy.filters.network.set_filter_state",
+				"agentio.tcp_destination",
 				"agentio.tcp_policy",
 				"envoy.filters.network.sni_dynamic_forward_proxy",
 				"envoy.filters.network.tcp_proxy",
 			}
-			wantValues = 4
 		}
 		if !equalStrings(
 			networkFilterNames(chain),
@@ -535,6 +535,11 @@ func TestPostTLSForwardingUsesOuterSNI(t *testing.T) {
 				t.Fatal("legacy TCP must preserve the original destination")
 			}
 		} else {
+			destination := &setstatenetworkv3.Config{}
+			if err := chain.Filters[1].GetTypedConfig().UnmarshalTo(destination); err != nil {
+				t.Fatal(err)
+			}
+			values = append(values, destination.OnNewConnection...)
 			if cluster.GetClusterType().GetName() != "envoy.clusters.dynamic_forward_proxy" ||
 				values[2].GetObjectKey() != dynamicHostKey ||
 				values[2].GetFormatString().

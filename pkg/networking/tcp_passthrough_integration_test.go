@@ -189,7 +189,7 @@ func TestEnvoyTCPPassthroughServerFirst(t *testing.T) {
 										t.Fatal(err)
 									}
 									settings := module.Value.GetFields()["filter_config"].GetStructValue().GetFields()["value"].GetStructValue()
-									settings.Fields["deniedCidrs"] = structpb.NewListValue(&structpb.ListValue{})
+									settings.Fields["denied_cidrs"] = structpb.NewListValue(&structpb.ListValue{})
 									filter.ConfigType = &listenerv3.Filter_TypedConfig{TypedConfig: b.pack(module)}
 								}
 							}

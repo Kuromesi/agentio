@@ -20,8 +20,12 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-func sniPolicyListenerFilter() *listenerv3.ListenerFilter {
-	fields, err := structpb.NewStruct(map[string]any{
+func (b *resourceBuilder) sniPolicyListenerFilter(excludeHosts []string) *listenerv3.ListenerFilter {
+	excluded := make([]any, 0, len(excludeHosts))
+	for _, host := range excludeHosts {
+		excluded = append(excluded, host)
+	}
+	fields := b.structure(map[string]any{
 		"dynamic_module_config": map[string]any{
 			"name": "envoy_agentio_connection_policy",
 			"module": map[string]any{
@@ -29,13 +33,14 @@ func sniPolicyListenerFilter() *listenerv3.ListenerFilter {
 			},
 		},
 		"filter_name": "envoy_agentio_sni_policy",
+		"filter_config": map[string]any{
+			"@type": "type.googleapis.com/google.protobuf.Struct",
+			"value": map[string]any{"exclude_hosts": excluded},
+		},
 	})
-	if err != nil {
-		panic(err)
-	}
 	return &listenerv3.ListenerFilter{
 		Name: "envoy.filters.listener.dynamic_modules",
-		ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: mustPack(&udpatypev1.TypedStruct{
+		ConfigType: &listenerv3.ListenerFilter_TypedConfig{TypedConfig: b.pack(&udpatypev1.TypedStruct{
 			TypeUrl: "type.googleapis.com/envoy.extensions.filters.listener.dynamic_modules.v3.DynamicModuleListenerFilter",
 			Value:   fields,
 		})},

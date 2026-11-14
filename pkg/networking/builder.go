@@ -45,6 +45,7 @@ const (
 	HTTPDynamicForwardProxy = "http_dynamic_forward_proxy"
 	TLSConnectOriginate     = "tls_connect_originate"
 	TLSProxyOriginate       = "tls_proxy_originate"
+	TLSEndpointOriginate    = "tls_endpoint_originate"
 	TLSPassthrough          = "tls_passthrough"
 	ExtProcCluster          = "sandbox-ext-proc"
 	PorterCluster           = "agentio-porter"
