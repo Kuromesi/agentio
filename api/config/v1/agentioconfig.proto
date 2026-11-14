@@ -57,7 +57,7 @@ message AgentioConfig {
   repeated string trusted_epe_identities = 6 [json_name = "trustedEPEIdentities"];
 
   // Destination restrictions for all native Envoy egress gateways, independently
-  // of EPE. Checks original TCP/UDP destinations and resolved forwarding targets.
+  // of EPE. Checks original TCP destinations and resolved forwarding targets.
   // Gateway-internal control connections are excluded. Omission/null inherits
   // the lower layer; a supplied message replaces user entries. Built-ins remain.
   EgressAuthorization egress_authorization = 7;

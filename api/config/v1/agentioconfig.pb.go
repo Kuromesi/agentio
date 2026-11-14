@@ -218,7 +218,7 @@ type AgentioConfig struct {
 	// the epe node type; declaring an identity in node metadata is not sufficient.
 	TrustedEpeIdentities []string `protobuf:"bytes,6,rep,name=trusted_epe_identities,json=trustedEPEIdentities,proto3" json:"trusted_epe_identities,omitempty"`
 	// Destination restrictions for all native Envoy egress gateways, independently
-	// of EPE. Checks original TCP/UDP destinations and resolved forwarding targets.
+	// of EPE. Checks original TCP destinations and resolved forwarding targets.
 	// Gateway-internal control connections are excluded. Omission/null inherits
 	// the lower layer; a supplied message replaces user entries. Built-ins remain.
 	EgressAuthorization *EgressAuthorization `protobuf:"bytes,7,opt,name=egress_authorization,json=egressAuthorization,proto3" json:"egress_authorization,omitempty"`
