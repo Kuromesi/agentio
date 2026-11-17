@@ -1,0 +1,150 @@
+name: agentio-envoy-image
+
+on:
+  workflow_dispatch:
+  push:
+    tags: [envoy-base-*]
+  pull_request:
+    paths:
+      - .github/workflows/envoy-image.yml
+      - extensions/envoy/base/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: envoy-image-${{ github.event.pull_request.number || 'build' }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: registry-cn-hangzhou.ack.aliyuncs.com/dev/agentio-envoy
+  REGION: cn-hongkong
+
+jobs:
+  check:
+    if: github.repository == 'Kuromesi/agentio'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.candidate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check build orchestration
+        run: |
+          bash -n extensions/envoy/base/build.sh
+          bash -n extensions/envoy/base/container-build.sh
+          bash -n extensions/envoy/base/publish.sh
+          python3 -m unittest discover -s extensions/envoy/base -p '*_test.py' -v
+      - name: Choose a unique candidate tag
+        id: candidate
+        run: |
+          source extensions/envoy/base/versions.env
+          echo "tag=v${ENVOY_VERSION}-agentio-${GITHUB_SHA:0:12}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/envoy-legacy-extproc' || startsWith(github.ref, 'refs/tags/envoy-base-'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    environment: envoy-build
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    env:
+      INSTANCE: ${{ matrix.arch == 'amd64' && vars.ENVOY_BUILD_ECS_AMD64 || vars.ENVOY_BUILD_ECS_ARM64 }}
+      OIDC_PROVIDER: ${{ vars.ENVOY_BUILD_OIDC_PROVIDER }}
+      ROLE: ${{ vars.ENVOY_BUILD_ROLE }}
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check builder configuration
+        run: |
+          : "${INSTANCE:?Set the native builder instance ID in the envoy-build environment}"
+          : "${OIDC_PROVIDER:?Set ENVOY_BUILD_OIDC_PROVIDER}"
+          : "${ROLE:?Set ENVOY_BUILD_ROLE}"
+      - uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1
+        with:
+          oidc-provider-arn: ${{ env.OIDC_PROVIDER }}
+          role-to-assume: ${{ env.ROLE }}
+          role-session-name: envoy-build-${{ matrix.arch }}-${{ github.run_id }}
+          role-session-expiration: 21600
+      - uses: aliyun/setup-aliyun-cli-action@09a5f86915bb556e27bf050e9a5e339aeb073df5 # v1
+        with:
+          version: 3.5.3
+      - name: Build and test on the native ECS
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          python3 extensions/envoy/base/cloud-build.py build \
+            --region "$REGION" --instance "$INSTANCE" \
+            --revision "$GITHUB_SHA" --image "$IMAGE" --tag "$TAG" --arch "$ARCH" \
+            --output "${RUNNER_TEMP}/envoy-${ARCH}.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: envoy-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/envoy-${{ matrix.arch }}.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: envoy-build
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      INSTANCE: ${{ vars.ENVOY_BUILD_ECS_AMD64 }}
+      TAG: ${{ needs.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: envoy-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+      - uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1
+        with:
+          oidc-provider-arn: ${{ vars.ENVOY_BUILD_OIDC_PROVIDER }}
+          role-to-assume: ${{ vars.ENVOY_BUILD_ROLE }}
+          role-session-name: envoy-publish-${{ github.run_id }}
+          role-session-expiration: 1800
+      - uses: aliyun/setup-aliyun-cli-action@09a5f86915bb556e27bf050e9a5e339aeb073df5 # v1
+        with:
+          version: 3.5.3
+      - name: Publish and verify the multi-platform manifest
+        run: |
+          python3 extensions/envoy/base/cloud-build.py publish \
+            --region "$REGION" --instance "$INSTANCE" \
+            --revision "$GITHUB_SHA" --image "$IMAGE" --tag "$TAG" \
+            --amd64-image "$(cat "${RUNNER_TEMP}/digests/envoy-amd64.txt")" \
+            --arm64-image "$(cat "${RUNNER_TEMP}/digests/envoy-arm64.txt")" \
+            --output "${RUNNER_TEMP}/envoy-image.txt"
+          {
+            echo '### Agentio Envoy base image'
+            echo
+            echo "Tag: \`$IMAGE:$TAG\`"
+            echo
+            echo 'Use this immutable reference as ENVOY_IMAGE:'
+            echo
+            cat "${RUNNER_TEMP}/envoy-image.txt"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: envoy-image
+          path: ${{ runner.temp }}/envoy-image.txt
+          if-no-files-found: error
+          retention-days: 30
