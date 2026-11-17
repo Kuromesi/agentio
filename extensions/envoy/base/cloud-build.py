@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright 2026 The Kruise Authors
-"""Run the pinned Envoy build on an existing ECS through Cloud Assistant."""
+"""Run a native Envoy build Job on the dedicated ACK cluster."""
 
 import argparse
 import json
@@ -11,29 +11,9 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 
-
-def cli(region, operation, *arguments):
-    completed = subprocess.run(
-        ["aliyun", "ecs", operation, "--region", region, "--RegionId", region,
-         *arguments], check=True, text=True, stdout=subprocess.PIPE,
-    )
-    return json.loads(completed.stdout)
-
-
-def validate(args):
-    patterns = {
-        "revision": r"[0-9a-f]{40}",
-        "image": r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?(?:/[a-z0-9][a-z0-9._-]*)+",
-        "tag": r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}",
-        "instance": r"i-[A-Za-z0-9]+",
-    }
-    for field, pattern in patterns.items():
-        if not re.fullmatch(pattern, getattr(args, field)):
-            raise ValueError(f"Invalid {field}")
-    if args.phase == "publish":
-        for reference in (args.amd64_image, args.arm64_image):
-            image_reference(reference, args.image)
+NAMESPACE = "envoy-build"
 
 
 def image_reference(value, repository):
@@ -42,22 +22,37 @@ def image_reference(value, repository):
     return value
 
 
-def command(args):
+def validate(args):
+    for field, pattern in {
+        "revision": r"[0-9a-f]{40}",
+        "image": r"[a-z0-9][a-z0-9.-]*(?::[0-9]+)?(?:/[a-z0-9][a-z0-9._-]*)+",
+        "tag": r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}",
+    }.items():
+        if not re.fullmatch(pattern, getattr(args, field)):
+            raise ValueError(f"Invalid {field}")
+    if args.phase == "publish":
+        for reference in (args.amd64_image, args.arm64_image):
+            image_reference(reference, args.image)
+
+
+def kubectl(args, *command, document=None):
+    completed = subprocess.run(
+        ["kubectl", "--kubeconfig", args.kubeconfig, "-n", NAMESPACE, *command],
+        input=json.dumps(document) if document is not None else None,
+        check=True, text=True, stdout=subprocess.PIPE,
+    )
+    return completed.stdout
+
+
+def job(args, name):
     directory = f"/disk1/agentio-envoy/runs/{args.revision}/agentio"
-    log = f"/disk1/agentio-envoy/logs/{args.tag}-{args.phase}-{args.arch}.log"
-    if args.phase == "build":
-        arguments = ["build.sh", args.image, args.tag, args.arch]
-    else:
-        arguments = ["publish.sh", args.image, args.tag,
-                     args.amd64_image, args.arm64_image]
-    return "\n".join([
+    arguments = ["build.sh", args.image, args.tag, args.arch] if args.phase == "build" else [
+        "publish.sh", args.image, args.tag, args.amd64_image, args.arm64_image]
+    command = "\n".join([
         "set -euo pipefail",
-        "mkdir -p /disk1/agentio-envoy/logs",
-        f"log={shlex.quote(log)}",
-        # Cloud Assistant retains at most 24 KiB of output; keep the full log on ECS.
-        "exec 3>&1",
-        "trap 'code=$?; tail -c 16000 \"$log\" >&3; exit \"$code\"' EXIT",
-        "exec >\"$log\" 2>&1",
+        "apk add --no-cache bash python3 git util-linux",
+        "mkdir -p /root/.docker /disk1/agentio-envoy",
+        "cp /registry/config.json /root/.docker/config.json",
         f"mkdir -p {shlex.quote(directory)}",
         f"cd {shlex.quote(directory)}",
         "if [[ ! -d .git ]]; then git init -q; fi",
@@ -65,73 +60,81 @@ def command(args):
         "git checkout --detach --force FETCH_HEAD",
         shlex.join(["bash", "extensions/envoy/base/" + arguments[0], *arguments[1:]]),
     ])
-
-
-def wait(region, instance, invocation, timeout):
-    deadline = time.monotonic() + timeout
-    pending = {"Pending", "Running", "Stopping"}
-    while time.monotonic() < deadline:
-        response = cli(region, "DescribeInvocationResults", "--InvokeId", invocation,
-                       "--InstanceId", instance, "--ContentEncoding", "PlainText")
-        results = response["Invocation"]["InvocationResults"]["InvocationResult"]
-        if results and results[0]["InvocationStatus"] not in pending:
-            return results[0]
-        time.sleep(10)
-    raise TimeoutError(f"Cloud Assistant invocation {invocation} did not finish")
+    return {
+        "apiVersion": "batch/v1", "kind": "Job",
+        "metadata": {"name": name, "namespace": NAMESPACE},
+        "spec": {
+            "backoffLimit": 0, "activeDeadlineSeconds": 19800 if args.phase == "build" else 900,
+            "ttlSecondsAfterFinished": 86400,
+            "template": {"spec": {
+                "restartPolicy": "Never", "automountServiceAccountToken": False,
+                "nodeSelector": {"kubernetes.io/arch": args.arch, "agentio-build": "true"},
+                "volumes": [
+                    {"name": "data", "persistentVolumeClaim": {"claimName": "envoy-cache-" + args.arch}},
+                    {"name": "registry", "secret": {"secretName": "envoy-registry"}},
+                ],
+                "initContainers": [{
+                    "name": "docker", "image": "docker:27-dind", "restartPolicy": "Always",
+                    "securityContext": {"privileged": True},
+                    "env": [{"name": "DOCKER_TLS_CERTDIR", "value": ""}],
+                    "args": ["--host=tcp://127.0.0.1:2375", "--host=unix:///var/run/docker.sock"],
+                    "startupProbe": {"exec": {"command": ["docker", "info"]},
+                                     "periodSeconds": 2, "failureThreshold": 90},
+                    "resources": {"requests": {"cpu": "26", "memory": "112Gi"},
+                                  "limits": {"cpu": "28", "memory": "116Gi"}},
+                    "volumeMounts": [{"name": "data", "mountPath": "/disk1"},
+                                     {"name": "data", "mountPath": "/var/lib/docker", "subPath": "docker"}],
+                }],
+                "containers": [{
+                    "name": "build", "image": "docker:27-cli", "command": ["/bin/sh", "-ec",
+                        "apk add --no-cache bash && exec bash -c " + shlex.quote(command)],
+                    "env": [{"name": "DOCKER_HOST", "value": "tcp://127.0.0.1:2375"}],
+                    "resources": {"requests": {"cpu": "1", "memory": "2Gi"},
+                                  "limits": {"cpu": "2", "memory": "2Gi"}},
+                    "volumeMounts": [{"name": "data", "mountPath": "/disk1"},
+                                     {"name": "registry", "mountPath": "/registry", "readOnly": True}],
+                }],
+            }},
+        },
+    }
 
 
 def run(args):
     validate(args)
-    timeout = 19800 if args.phase == "build" else 900
-    invocation = cli(args.region, "RunCommand", "--Type", "RunShellScript",
-                     "--InstanceId.1", args.instance, "--ContentEncoding", "PlainText",
-                     "--CommandContent", command(args), "--Timeout", str(timeout),
-                     "--TerminationMode", "ProcessTree", "--KeepCommand", "false")["InvokeId"]
-    print(f"Cloud Assistant invocation: {invocation}", flush=True)
-    terminal = False
-    succeeded = False
+    name = f"envoy-{args.phase}-{args.arch}-{args.revision[:12]}-{uuid.uuid4().hex[:8]}"
+    manifest = job(args, name)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    log_path = Path(args.output).with_suffix(".log")
+    kubectl(args, "create", "-f", "-", document=manifest)
+    print(f"ACK Job: {NAMESPACE}/{name}", flush=True)
     try:
-        result = wait(args.region, args.instance, invocation, timeout + 120)
-        terminal = True
-        print(result["Output"], flush=True)
-        if result["InvocationStatus"] != "Success" or result["ExitCode"] != 0:
-            raise RuntimeError(f"Remote {args.phase} failed: {result['InvocationStatus']} "
-                               f"{result.get('ErrorInfo', '')}")
-        references = re.findall(r"^AGENTIO_IMAGE=(.+)$", result["Output"], re.MULTILINE)
-        if result.get("Dropped", 0) or len(references) != 1:
-            raise RuntimeError("Remote output did not contain exactly one complete image result")
-        reference = image_reference(references[0], args.image)
-        Path(args.output).write_text(reference + "\n")
-        succeeded = True
-        return reference
+        deadline = time.monotonic() + manifest["spec"]["activeDeadlineSeconds"] + 180
+        while time.monotonic() < deadline:
+            status = json.loads(kubectl(args, "get", "job", name, "-o", "json")).get("status", {})
+            conditions = status.get("conditions", [])
+            if any(c["status"] == "True" and c["type"] in ("Complete", "Failed") for c in conditions):
+                output = kubectl(args, "logs", "job/" + name, "-c", "build")
+                log_path.write_text(output)
+                print(output[-16000:], flush=True)
+                if not any(c["type"] == "Complete" and c["status"] == "True" for c in conditions):
+                    raise RuntimeError(f"ACK {args.phase} Job failed; full log: {log_path}")
+                references = re.findall(r"^AGENTIO_IMAGE=(.+)$", output, re.MULTILINE)
+                if len(references) != 1:
+                    raise RuntimeError("Job did not return exactly one image result")
+                reference = image_reference(references[0], args.image)
+                Path(args.output).write_text(reference + "\n")
+                return reference
+            time.sleep(15)
+        raise TimeoutError(f"ACK Job {name} did not finish")
     finally:
-        if not terminal:
-            cli(args.region, "StopInvocation", "--InvokeId", invocation,
-                "--InstanceId.1", args.instance)
-        if not succeeded and args.phase == "build":
-            # Stopping a Docker CLI process alone does not stop its daemon-owned container.
-            container = f"agentio-envoy-{args.arch}-{args.tag}"
-            cleanup = (
-                "set -euo pipefail\n"
-                f"container={shlex.quote(container)}\n"
-                'if [[ -n $(docker container ls -aq --filter "name=^/$container$") ]]; then\n'
-                '  docker rm --force "$container"\n'
-                "fi\n"
-            )
-            cleanup_id = cli(args.region, "RunCommand", "--Type", "RunShellScript",
-                             "--InstanceId.1", args.instance, "--CommandContent", cleanup,
-                             "--ContentEncoding", "PlainText", "--Timeout", "60",
-                             "--KeepCommand", "false")["InvokeId"]
-            cleaned = wait(args.region, args.instance, cleanup_id, 120)
-            if cleaned["InvocationStatus"] != "Success" or cleaned["ExitCode"] != 0:
-                raise RuntimeError(f"Unable to clean up build container: {cleaned}")
+        # Deleting the Pod also stops its daemon-owned compilation containers.
+        kubectl(args, "delete", "job", name, "--cascade=foreground", "--wait=true", "--timeout=120s")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phase", choices=["build", "publish"])
-    parser.add_argument("--region", default="cn-hongkong")
-    parser.add_argument("--instance", required=True)
+    parser.add_argument("--kubeconfig", required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--tag", required=True)

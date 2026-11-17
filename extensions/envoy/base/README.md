@@ -16,32 +16,25 @@ The factory's C++ tests are included in the patch at `//test/extensions/filters/
 
 ## Build workflow
 
-`.github/workflows/envoy-image.yml` orchestrates two existing native ECS builders through Cloud Assistant. GitHub-hosted runners hold temporary OIDC credentials; the ECS instances hold the registry login. The workflow does not create ECS instances or register self-hosted GitHub runners.
+`.github/workflows/envoy-image.yml` submits native amd64 and arm64 Kubernetes Jobs to a dedicated ACK cluster. Each Job uses a private Docker daemon sidecar; deleting the Job stops its compiler containers. No host Docker socket or self-hosted GitHub runner is used.
 
-The native jobs apply the patch to the pinned Envoy source, run its C++ tests, and build an optimized Envoy binary inside the pinned build image. Each job packages the binary in the pinned runtime image, checks its architecture and version, and validates `smoke.yaml` to confirm that the custom factory is registered. Both jobs must succeed before the publish job merges their immutable digests. Publishing also checks both source labels and the exact `linux/amd64`, `linux/arm64` platform set.
+The native jobs apply the patch to the pinned Envoy source, run its C++ tests, and build an optimized Envoy binary inside the pinned build image. Each job packages the binary in the pinned runtime image, checks its architecture and version, and validates `smoke.yaml` to confirm that the custom factory is registered. Both jobs must succeed before publishing merges their immutable digests. Publishing also checks both source labels and the exact `linux/amd64`, `linux/arm64` platform set.
 
-The destination is `registry-cn-hangzhou.ack.aliyuncs.com/dev/agentio-envoy`. Candidate tags include the Envoy version, Agentio source revision, Actions run ID, and attempt. The final immutable reference is written to the workflow summary and the `envoy-image` artifact. Internal gateway builds consume it through the existing `ENVOY_IMAGE` Docker build argument.
+The destination is `docker.io/kuromesi/agentio-envoy`. Candidate tags include the Envoy version, Agentio source revision, Actions run ID, and attempt. The final immutable reference is written to the workflow summary and the `envoy-image` artifact. Internal gateway builds consume it through the existing `ENVOY_IMAGE` Docker build argument.
 
-### One-time setup
+### ACK setup
 
-Prepare one amd64 ECS and one arm64 ECS in Hong Kong, each with 32 vCPUs, 128 GiB of RAM, and a 500 GiB data disk mounted at `/disk1`. Install Git, Python 3, `flock`, Docker with Buildx, and a current Cloud Assistant agent. Allow outbound access to GitHub, Bazel dependency sources, Docker Hub, and the destination registry. GitHub does not require inbound SSH access.
+Use a dedicated ACK cluster with Kubernetes 1.29 or later, containerd, Flannel, and the CSI disk add-ons. The Job uses Kubernetes native sidecars and a privileged Docker daemon. It must run on ECS worker nodes; ACS virtual nodes need separate privileged-container support and are not used here.
 
-Log Docker into the destination registry on both instances using a credential permitted to push `dev/agentio-envoy`. Provisioning must create the repository if it does not already exist. Do not place the registry credential in the repository or Cloud Assistant command content.
+Prepare one native amd64 node pool and one native arm64 node pool in Hong Kong, each with 32 vCPUs and 128 GiB of RAM per node. Label both pools `agentio-build=true`. Give worker nodes outbound connectivity to GitHub, Bazel dependency sources, Docker Hub, and Alpine package repositories. An autoscaling pool can use a minimum of zero and maximum of one; keep a small system pool available for cluster services and node autoscaling.
 
-Create the GitHub deployment environment `envoy-build` in `Kuromesi/agentio` with these variables:
+Apply `ack-build.yaml` to create the namespace, workflow service account, namespace-scoped permissions, and one 500 GiB cache PVC per architecture. Place a Docker config with push permission for the destination in Secret `envoy-registry`, key `config.json`, in namespace `envoy-build`. Do not commit the Docker config.
 
-| Variable | Value |
-| --- | --- |
-| `ENVOY_BUILD_ECS_AMD64` | Native amd64 instance ID |
-| `ENVOY_BUILD_ECS_ARM64` | Native arm64 instance ID |
-| `ENVOY_BUILD_OIDC_PROVIDER` | Alibaba Cloud GitHub OIDC provider ARN |
-| `ENVOY_BUILD_ROLE` | Cloud Assistant build role ARN |
-
-Configure the provider for `https://token.actions.githubusercontent.com` with audience `sts.aliyuncs.com`. Restrict the role trust to subject `repo:Kuromesi/agentio:environment:envoy-build`, and restrict environment deployment branches and tags to `envoy-legacy-extproc` and trusted `envoy-base-*` tags. Set the role's `MaxSessionDuration` to at least 21600 seconds. Grant the role command execution and cancellation on the two dedicated builders, plus the invocation-result queries needed by the workflow; it does not need permission to create or delete ECS instances.
+Create the GitHub deployment environment `envoy-build` in `Kuromesi/agentio`. Set its `ENVOY_BUILD_KUBECONFIG` secret to a kubeconfig using a time-limited token for service account `envoy-build/envoy-workflow`. The account can submit and inspect Jobs only in this namespace. Refresh the token before each build campaign; do not upload an administrator kubeconfig. Restrict environment deployment branches and tags to `envoy-legacy-extproc` and trusted `envoy-base-*` tags.
 
 ### Triggering
 
-Pull requests touching this directory run the local orchestration tests without cloud credentials. Ordinary branch pushes do not start a paid build. After reviewing and pushing the source commit, explicitly push a tag to build that commit:
+Pull requests touching this directory run orchestration tests without cluster credentials. Ordinary branch pushes do not start a paid build. After reviewing and pushing the source commit, explicitly push a tag to build that commit:
 
 ```bash
 git tag envoy-base-review-1 <reviewed-commit>
@@ -50,11 +43,11 @@ git push origin envoy-base-review-1
 
 The workflow also supports `workflow_dispatch` on `envoy-legacy-extproc`. GitHub requires the workflow to exist on the repository's default branch before enabling that event; until then, use the tag trigger. No default-branch change is required for tag-triggered builds.
 
-### Logs, cancellation, and limits
+### Logs, cancellation, and costs
 
-Full logs remain at `/disk1/agentio-envoy/logs/<candidate>-<phase>-<architecture>.log`; the final 16000 bytes are returned to Actions. Native compilation is limited to 19800 seconds so the six-hour GitHub job retains time for cleanup. On cancellation or failure, the orchestration stops an active invocation and separately removes only that candidate's build container. The Cloud Assistant execution timeout remains in effect if the GitHub runner disappears.
+Native compilation is limited to 19800 seconds. The ACK Job deadline remains effective if the GitHub runner disappears. On success, failure, or cancellation, the runner deletes its Job and daemon. Completed build logs are uploaded to Actions; while compiling, inspect the Job's `build` container logs in ACK.
 
-Generated source checkouts and outputs live under `/disk1/agentio-envoy/runs/<Agentio revision>`. The Docker build container reuses Bazel caches under `/disk1/agentio-envoy/cache`. Builds take a per-instance lock. Infrastructure provisioning and release are separate from this workflow; an idle running ECS continues to incur charges.
+Generated checkouts, Docker layers, binaries, and Bazel caches reside on the per-architecture PVCs mounted at `/disk1`. Builds take a per-volume lock. Jobs are not retried automatically. Keep the PVCs across retries, then delete them when the build campaign ends: retaining cache disks, an idle ACK cluster, or running worker nodes continues to incur charges. Infrastructure creation and release are separate from this workflow. Remove the temporary GitHub access secret when releasing the cluster.
 
 ## Local checks
 

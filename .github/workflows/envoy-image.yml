@@ -17,8 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  IMAGE: registry-cn-hangzhou.ack.aliyuncs.com/dev/agentio-envoy
-  REGION: cn-hongkong
+  IMAGE: docker.io/kuromesi/agentio-envoy
 
 jobs:
   check:
@@ -53,40 +52,29 @@ jobs:
     environment: envoy-build
     permissions:
       contents: read
-      id-token: write
     strategy:
       fail-fast: false
       matrix:
         arch: [amd64, arm64]
     env:
-      INSTANCE: ${{ matrix.arch == 'amd64' && vars.ENVOY_BUILD_ECS_AMD64 || vars.ENVOY_BUILD_ECS_ARM64 }}
-      OIDC_PROVIDER: ${{ vars.ENVOY_BUILD_OIDC_PROVIDER }}
-      ROLE: ${{ vars.ENVOY_BUILD_ROLE }}
       TAG: ${{ needs.check.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check builder configuration
+      - name: Configure ACK access
+        env:
+          ACK_CONFIG: ${{ secrets.ENVOY_BUILD_KUBECONFIG }}
         run: |
-          : "${INSTANCE:?Set the native builder instance ID in the envoy-build environment}"
-          : "${OIDC_PROVIDER:?Set ENVOY_BUILD_OIDC_PROVIDER}"
-          : "${ROLE:?Set ENVOY_BUILD_ROLE}"
-      - uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1
-        with:
-          oidc-provider-arn: ${{ env.OIDC_PROVIDER }}
-          role-to-assume: ${{ env.ROLE }}
-          role-session-name: envoy-build-${{ matrix.arch }}-${{ github.run_id }}
-          role-session-expiration: 21600
-      - uses: aliyun/setup-aliyun-cli-action@09a5f86915bb556e27bf050e9a5e339aeb073df5 # v1
-        with:
-          version: 3.5.3
-      - name: Build and test on the native ECS
+          umask 077
+          test -n "$ACK_CONFIG"
+          printf '%s' "$ACK_CONFIG" > "$RUNNER_TEMP/ack.kubeconfig"
+      - name: Build and test on a native ACK worker
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           python3 extensions/envoy/base/cloud-build.py build \
-            --region "$REGION" --instance "$INSTANCE" \
+            --kubeconfig "$RUNNER_TEMP/ack.kubeconfig" \
             --revision "$GITHUB_SHA" --image "$IMAGE" --tag "$TAG" --arch "$ARCH" \
             --output "${RUNNER_TEMP}/envoy-${ARCH}.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -94,6 +82,13 @@ jobs:
           name: envoy-digest-${{ matrix.arch }}
           path: ${{ runner.temp }}/envoy-${{ matrix.arch }}.txt
           if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: envoy-log-${{ matrix.arch }}
+          path: ${{ runner.temp }}/envoy-${{ matrix.arch }}.log
+          if-no-files-found: ignore
           retention-days: 7
 
   publish:
@@ -103,9 +98,7 @@ jobs:
     environment: envoy-build
     permissions:
       contents: read
-      id-token: write
     env:
-      INSTANCE: ${{ vars.ENVOY_BUILD_ECS_AMD64 }}
       TAG: ${{ needs.check.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,19 +109,17 @@ jobs:
           pattern: envoy-digest-*
           merge-multiple: true
           path: ${{ runner.temp }}/digests
-      - uses: aliyun/configure-aliyun-credentials-action@1e5248c8d5d93a8781ac344a68e19a43341e79e6 # v1
-        with:
-          oidc-provider-arn: ${{ vars.ENVOY_BUILD_OIDC_PROVIDER }}
-          role-to-assume: ${{ vars.ENVOY_BUILD_ROLE }}
-          role-session-name: envoy-publish-${{ github.run_id }}
-          role-session-expiration: 1800
-      - uses: aliyun/setup-aliyun-cli-action@09a5f86915bb556e27bf050e9a5e339aeb073df5 # v1
-        with:
-          version: 3.5.3
+      - name: Configure ACK access
+        env:
+          ACK_CONFIG: ${{ secrets.ENVOY_BUILD_KUBECONFIG }}
+        run: |
+          umask 077
+          test -n "$ACK_CONFIG"
+          printf '%s' "$ACK_CONFIG" > "$RUNNER_TEMP/ack.kubeconfig"
       - name: Publish and verify the multi-platform manifest
         run: |
           python3 extensions/envoy/base/cloud-build.py publish \
-            --region "$REGION" --instance "$INSTANCE" \
+            --kubeconfig "$RUNNER_TEMP/ack.kubeconfig" \
             --revision "$GITHUB_SHA" --image "$IMAGE" --tag "$TAG" \
             --amd64-image "$(cat "${RUNNER_TEMP}/digests/envoy-amd64.txt")" \
             --arm64-image "$(cat "${RUNNER_TEMP}/digests/envoy-arm64.txt")" \

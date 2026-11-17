@@ -1,6 +1,7 @@
 # Copyright 2026 The Kruise Authors
 import argparse
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -11,7 +12,7 @@ from unittest import mock
 SPEC = importlib.util.spec_from_file_location("cloud_build", Path(__file__).with_name("cloud-build.py"))
 BUILD = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUILD)
-IMAGE = "registry-cn-hangzhou.ack.aliyuncs.com/dev/agentio-envoy"
+IMAGE = "docker.io/kuromesi/agentio-envoy"
 REFERENCE = IMAGE + "@sha256:" + "a" * 64
 
 
@@ -20,93 +21,62 @@ class CloudBuildTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.args = argparse.Namespace(
-            phase="build", region="cn-hongkong", instance="i-builder",
-            revision="b" * 40, image=IMAGE, tag="v1.40.2-review-123", arch="arm64",
-            amd64_image="", arm64_image="", output=str(Path(self.directory.name) / "image.txt"),
+            phase="build", kubeconfig="test.kubeconfig", revision="b" * 40,
+            image=IMAGE, tag="v1.40.2-review-123", arch="arm64", amd64_image="",
+            arm64_image="", output=str(Path(self.directory.name) / "image.txt"),
         )
-        self.success = {
-            "InvocationStatus": "Success", "ExitCode": 0, "Dropped": 0,
-            "Output": "build log\nAGENTIO_IMAGE=" + REFERENCE + "\n",
-        }
 
-    def test_success_records_only_the_immutable_image(self):
-        with mock.patch.object(BUILD, "cli", return_value={"InvokeId": "build"}) as cli, \
-                mock.patch.object(BUILD, "wait", return_value=self.success):
+    def test_success_records_digest_and_deletes_job(self):
+        complete = json.dumps({"status": {"conditions": [{"type": "Complete", "status": "True"}]}})
+        output = "log\nAGENTIO_IMAGE=" + REFERENCE + "\n"
+        with mock.patch.object(BUILD, "kubectl", side_effect=["", complete, output, ""]) as kubectl:
             self.assertEqual(BUILD.run(self.args), REFERENCE)
-        self.assertEqual(cli.call_count, 1)
+        self.assertEqual(kubectl.call_args.args[1], "delete")
         self.assertEqual(Path(self.args.output).read_text(), REFERENCE + "\n")
+        self.assertEqual(Path(self.args.output).with_suffix(".log").read_text(), output)
 
-    def test_remote_failure_cleans_up_its_own_container(self):
-        failed = dict(self.success, InvocationStatus="Failed", ExitCode=1)
-        with mock.patch.object(BUILD, "cli", return_value={"InvokeId": "cleanup"}) as cli, \
-                mock.patch.object(BUILD, "wait", side_effect=[failed, self.success]):
-            with self.assertRaisesRegex(RuntimeError, "Remote build failed"):
+    def test_failed_job_or_missing_result_cannot_publish_digest(self):
+        for condition, output in [("Failed", "compile failed"), ("Complete", "no result")]:
+            with self.subTest(condition=condition):
+                terminal = json.dumps({"status": {"conditions": [{"type": condition, "status": "True"}]}})
+                with mock.patch.object(BUILD, "kubectl", side_effect=["", terminal, output, ""]) as kubectl:
+                    with self.assertRaises(RuntimeError):
+                        BUILD.run(self.args)
+                self.assertEqual(kubectl.call_args.args[1], "delete")
+                self.assertFalse(Path(self.args.output).exists())
+
+    def test_interrupted_poll_deletes_job_and_daemon(self):
+        with mock.patch.object(BUILD, "kubectl", side_effect=["", KeyboardInterrupt(), ""]) as kubectl:
+            with self.assertRaises(KeyboardInterrupt):
                 BUILD.run(self.args)
-        cleanup = cli.call_args.args
-        self.assertIn("agentio-envoy-arm64-v1.40.2-review-123", cleanup[cleanup.index("--CommandContent") + 1])
-        self.assertFalse(Path(self.args.output).exists())
+        self.assertEqual(kubectl.call_args.args[1], "delete")
 
-    def test_timeout_stops_invocation_and_cleans_up_container(self):
-        with mock.patch.object(BUILD, "cli", return_value={"InvokeId": "build"}) as cli, \
-                mock.patch.object(BUILD, "wait", side_effect=[TimeoutError("expired"), self.success]):
-            with self.assertRaisesRegex(TimeoutError, "expired"):
-                BUILD.run(self.args)
-        self.assertEqual([call.args[1] for call in cli.call_args_list],
-                         ["RunCommand", "StopInvocation", "RunCommand"])
-
-    def test_truncated_output_does_not_publish_a_result(self):
-        truncated = dict(self.success, Dropped=100)
-        with mock.patch.object(BUILD, "cli", return_value={"InvokeId": "build"}), \
-                mock.patch.object(BUILD, "wait", side_effect=[truncated, self.success]):
-            with self.assertRaisesRegex(RuntimeError, "complete image result"):
-                BUILD.run(self.args)
-        self.assertFalse(Path(self.args.output).exists())
-
-    def test_remote_values_and_foreign_digest_are_rejected_before_execution(self):
-        self.args.tag = "review; touch /tmp/unexpected"
-        with mock.patch.object(BUILD, "cli") as cli:
+    def test_untrusted_values_are_rejected_before_cluster_write(self):
+        self.args.tag = "tag; touch /tmp/unexpected"
+        with mock.patch.object(BUILD, "kubectl") as kubectl:
             with self.assertRaisesRegex(ValueError, "Invalid tag"):
                 BUILD.run(self.args)
-            cli.assert_not_called()
+            kubectl.assert_not_called()
         self.args.tag = "review"
         self.args.phase = "publish"
         self.args.amd64_image = "other.example/envoy@sha256:" + "a" * 64
         self.args.arm64_image = REFERENCE
-        with mock.patch.object(BUILD, "cli") as cli:
+        with mock.patch.object(BUILD, "kubectl") as kubectl:
             with self.assertRaisesRegex(ValueError, "configured image repository"):
                 BUILD.run(self.args)
-            cli.assert_not_called()
+            kubectl.assert_not_called()
 
-    def test_wait_handles_delivery_delay_and_running_status(self):
-        def response(items):
-            return {"Invocation": {"InvocationResults": {"InvocationResult": items}}}
-
-        with mock.patch.object(BUILD, "cli", side_effect=[
-                response([]), response([{"InvocationStatus": "Running"}]), response([self.success])]), \
-                mock.patch.object(BUILD.time, "sleep") as sleep:
-            self.assertEqual(BUILD.wait("cn-hongkong", "i-builder", "invocation", 60), self.success)
-        self.assertEqual(sleep.call_count, 2)
-
-    def test_log_tail_reaches_the_caller_and_preserves_failure_exit_code(self):
-        root = Path(self.directory.name)
-        binary = root / "bin"
-        binary.mkdir()
-        (binary / "git").write_text("#!/bin/sh\nexit 0\n")
-        (binary / "git").chmod(0o755)
-        script = root / "runs" / self.args.revision / "agentio/extensions/envoy/base/build.sh"
-        script.parent.mkdir(parents=True)
-        script.write_text("#!/bin/bash\nprintf '%020000d\\n' 0\necho EXPECTED_LOG_TAIL\nexit 7\n")
-        environment = dict(os.environ, PATH=str(binary) + os.pathsep + os.environ["PATH"])
-        result = subprocess.run(
-            ["bash", "-c", BUILD.command(self.args).replace("/disk1/agentio-envoy", str(root))],
-            env=environment, text=True, capture_output=True,
-        )
-        self.assertEqual(result.returncode, 7, result.stderr)
-        self.assertIn("EXPECTED_LOG_TAIL", result.stdout)
-        self.assertEqual(len(result.stdout), 16000)
-        logs = list((root / "logs").glob("*.log"))
-        self.assertEqual(len(logs), 1)
-        self.assertGreater(logs[0].stat().st_size, 20000)
+    def test_native_job_has_bounded_lifetime_and_shared_daemon_paths(self):
+        manifest = BUILD.job(self.args, "test")
+        self.assertEqual(manifest["spec"]["backoffLimit"], 0)
+        self.assertEqual(manifest["spec"]["activeDeadlineSeconds"], 19800)
+        pod = manifest["spec"]["template"]["spec"]
+        self.assertEqual(pod["nodeSelector"]["kubernetes.io/arch"], "arm64")
+        self.assertFalse(pod["automountServiceAccountToken"])
+        self.assertEqual(pod["initContainers"][0]["restartPolicy"], "Always")
+        for container in pod["initContainers"] + pod["containers"]:
+            self.assertIn({"name": "data", "mountPath": "/disk1"}, container["volumeMounts"])
+        self.assertIn(self.args.revision, pod["containers"][0]["command"][-1])
 
     def test_publish_rejects_wrong_architecture_source_or_manifest(self):
         root = Path(self.directory.name)

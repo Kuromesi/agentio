@@ -1,0 +1,65 @@
+# Copyright 2026 The Kruise Authors
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: envoy-build
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: envoy-workflow
+  namespace: envoy-build
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: envoy-workflow
+  namespace: envoy-build
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, list, delete]
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: ['']
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: envoy-workflow
+  namespace: envoy-build
+subjects:
+  - kind: ServiceAccount
+    name: envoy-workflow
+    namespace: envoy-build
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: envoy-workflow
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: envoy-cache-amd64
+  namespace: envoy-build
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: alicloud-disk-topology-alltype
+  resources:
+    requests:
+      storage: 500Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: envoy-cache-arm64
+  namespace: envoy-build
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: alicloud-disk-topology-alltype
+  resources:
+    requests:
+      storage: 500Gi
