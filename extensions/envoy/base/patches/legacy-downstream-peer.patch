@@ -1,0 +1,109 @@
+diff --git a/source/extensions/filters/common/set_filter_state/filter_config.cc b/source/extensions/filters/common/set_filter_state/filter_config.cc
+index bab3613..6453746 100644
+--- a/source/extensions/filters/common/set_filter_state/filter_config.cc
++++ b/source/extensions/filters/common/set_filter_state/filter_config.cc
+@@ -45,6 +45,46 @@ public:
+ 
+ REGISTER_FACTORY(GenericHashableStringObjectFactory, StreamInfo::FilterState::ObjectFactory);
+ 
++// Expose the legacy ext_proc peer fields without Istio peer discovery.
++class LegacyDownstreamPeer : public StreamInfo::FilterState::Object {
++public:
++  LegacyDownstreamPeer(absl::string_view name, absl::string_view name_space)
++      : name_(name), namespace_(name_space) {}
++
++  bool hasFieldSupport() const override { return true; }
++  FieldType getField(absl::string_view field) const override {
++    if (field == "name") {
++      return absl::string_view(name_);
++    }
++    if (field == "namespace") {
++      return absl::string_view(namespace_);
++    }
++    return absl::monostate{};
++  }
++
++private:
++  const std::string name_;
++  const std::string namespace_;
++};
++
++class LegacyDownstreamPeerFactory : public StreamInfo::FilterState::ObjectFactory {
++public:
++  std::string name() const override { return "agentio.legacy_downstream_peer"; }
++  std::unique_ptr<StreamInfo::FilterState::Object>
++  createFromBytes(absl::string_view data) const override {
++    // Kubernetes workload names and namespaces cannot contain a newline.
++    const auto separator = data.find('\n');
++    if (separator == absl::string_view::npos || separator == 0 || separator + 1 == data.size() ||
++        data.find('\n', separator + 1) != absl::string_view::npos) {
++      return nullptr;
++    }
++    return std::make_unique<LegacyDownstreamPeer>(data.substr(0, separator),
++                                                data.substr(separator + 1));
++  }
++};
++
++REGISTER_FACTORY(LegacyDownstreamPeerFactory, StreamInfo::FilterState::ObjectFactory);
++
+ class GenericBoolObjectFactory : public StreamInfo::FilterState::ObjectFactory {
+ public:
+   std::string name() const override { return "envoy.bool"; }
+diff --git a/test/extensions/filters/common/set_filter_state/BUILD b/test/extensions/filters/common/set_filter_state/BUILD
+index 4c41e99..f271c8f 100644
+--- a/test/extensions/filters/common/set_filter_state/BUILD
++++ b/test/extensions/filters/common/set_filter_state/BUILD
+@@ -14,6 +14,7 @@ envoy_cc_test(
+     rbe_pool = "linux_x64_small",
+     deps = [
+         "//envoy/common:hashable_interface",
++        "//envoy/registry",
+         "//source/common/formatter:formatter_extension_lib",
+         "//source/common/router:string_accessor_lib",
+         "//source/extensions/filters/common/set_filter_state:filter_config_lib",
+diff --git a/test/extensions/filters/common/set_filter_state/filter_config_test.cc b/test/extensions/filters/common/set_filter_state/filter_config_test.cc
+index 34c40aa..9bc446d 100644
+--- a/test/extensions/filters/common/set_filter_state/filter_config_test.cc
++++ b/test/extensions/filters/common/set_filter_state/filter_config_test.cc
+@@ -1,4 +1,5 @@
+ #include "envoy/common/hashable.h"
++#include "envoy/registry/registry.h"
+ #include "envoy/stream_info/bool_accessor.h"
+ 
+ #include "source/common/router/string_accessor_impl.h"
+@@ -278,6 +279,35 @@ TEST_F(ConfigTest, SetValueUpstreamSharedTransitive) {
+   EXPECT_EQ(foo, objects->at(0).data_.get());
+ }
+ 
++TEST_F(ConfigTest, LegacyDownstreamPeerFields) {
++  initialize({R"YAML(
++    object_key: downstream_peer
++    factory_key: agentio.legacy_downstream_peer
++    format_string:
++      text_format_source:
++        inline_string: "sandbox-1\nproduction"
++  )YAML"});
++  update();
++  const auto* peer = info_.filterState()->getDataReadOnlyGeneric("downstream_peer");
++  ASSERT_NE(nullptr, peer);
++  EXPECT_TRUE(peer->hasFieldSupport());
++  EXPECT_EQ("sandbox-1", absl::get<absl::string_view>(peer->getField("name")));
++  EXPECT_EQ("production", absl::get<absl::string_view>(peer->getField("namespace")));
++  EXPECT_TRUE(absl::holds_alternative<absl::monostate>(peer->getField("labels")));
++  EXPECT_EQ(0, info_.filterState()->objectsSharedWithUpstreamConnection()->size());
++}
++
++TEST_F(ConfigTest, LegacyDownstreamPeerRejectsIncompleteIdentity) {
++  const auto* factory =
++      Registry::FactoryRegistry<StreamInfo::FilterState::ObjectFactory>::getFactory(
++          "agentio.legacy_downstream_peer");
++  ASSERT_NE(nullptr, factory);
++  for (const absl::string_view value : {"", "sandbox-1", "\nproduction", "sandbox-1\n",
++                                      "sandbox-1\nproduction\nextra"}) {
++    EXPECT_EQ(nullptr, factory->createFromBytes(value));
++  }
++}
++
+ TEST_F(ConfigTest, SetBoolValueTrue) {
+   initialize({R"YAML(
+     object_key: my_key
