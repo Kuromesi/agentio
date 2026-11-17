@@ -47,7 +47,7 @@ jobs:
     if: >-
       github.event_name != 'pull_request' &&
       (github.ref == 'refs/heads/envoy-legacy-extproc' || startsWith(github.ref, 'refs/tags/envoy-base-'))
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, envoy-ack]
     timeout-minutes: 360
     environment: envoy-build
     permissions:
@@ -93,7 +93,7 @@ jobs:
 
   publish:
     needs: [check, build]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, envoy-ack]
     timeout-minutes: 20
     environment: envoy-build
     permissions:

@@ -73,6 +73,7 @@ class CloudBuildTest(unittest.TestCase):
         pod = manifest["spec"]["template"]["spec"]
         self.assertEqual(pod["nodeSelector"]["kubernetes.io/arch"], "arm64")
         self.assertFalse(pod["automountServiceAccountToken"])
+        self.assertEqual(pod["initContainers"][0]["args"], ["dockerd", "--host=unix:///var/run/docker.sock"])
         self.assertEqual(pod["initContainers"][0]["restartPolicy"], "Always")
         for container in pod["initContainers"] + pod["containers"]:
             self.assertIn({"name": "data", "mountPath": "/disk1"}, container["volumeMounts"])

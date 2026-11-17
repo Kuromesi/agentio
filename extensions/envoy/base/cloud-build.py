@@ -37,7 +37,7 @@ def validate(args):
 
 def kubectl(args, *command, document=None):
     completed = subprocess.run(
-        ["kubectl", "--kubeconfig", args.kubeconfig, "-n", NAMESPACE, *command],
+        ["kubectl", "--kubeconfig", args.kubeconfig, "--request-timeout=30s", "-n", NAMESPACE, *command],
         input=json.dumps(document) if document is not None else None,
         check=True, text=True, stdout=subprocess.PIPE,
     )
@@ -72,27 +72,30 @@ def job(args, name):
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": "envoy-cache-" + args.arch}},
                     {"name": "registry", "secret": {"secretName": "envoy-registry"}},
+                    {"name": "socket", "emptyDir": {}},
                 ],
                 "initContainers": [{
                     "name": "docker", "image": "docker:27-dind", "restartPolicy": "Always",
                     "securityContext": {"privileged": True},
                     "env": [{"name": "DOCKER_TLS_CERTDIR", "value": ""}],
-                    "args": ["--host=tcp://127.0.0.1:2375", "--host=unix:///var/run/docker.sock"],
+                    "args": ["dockerd", "--host=unix:///var/run/docker.sock"],
                     "startupProbe": {"exec": {"command": ["docker", "info"]},
                                      "periodSeconds": 2, "failureThreshold": 90},
                     "resources": {"requests": {"cpu": "26", "memory": "112Gi"},
                                   "limits": {"cpu": "28", "memory": "116Gi"}},
                     "volumeMounts": [{"name": "data", "mountPath": "/disk1"},
-                                     {"name": "data", "mountPath": "/var/lib/docker", "subPath": "docker"}],
+                                     {"name": "data", "mountPath": "/var/lib/docker", "subPath": "docker"},
+                                     {"name": "socket", "mountPath": "/var/run"}],
                 }],
                 "containers": [{
                     "name": "build", "image": "docker:27-cli", "command": ["/bin/sh", "-ec",
                         "apk add --no-cache bash && exec bash -c " + shlex.quote(command)],
-                    "env": [{"name": "DOCKER_HOST", "value": "tcp://127.0.0.1:2375"}],
+                    "env": [{"name": "DOCKER_HOST", "value": "unix:///var/run/docker.sock"}],
                     "resources": {"requests": {"cpu": "1", "memory": "2Gi"},
                                   "limits": {"cpu": "2", "memory": "2Gi"}},
                     "volumeMounts": [{"name": "data", "mountPath": "/disk1"},
-                                     {"name": "registry", "mountPath": "/registry", "readOnly": True}],
+                                     {"name": "registry", "mountPath": "/registry", "readOnly": True},
+                                     {"name": "socket", "mountPath": "/var/run"}],
                 }],
             }},
         },

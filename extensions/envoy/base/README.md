@@ -16,7 +16,7 @@ The factory's C++ tests are included in the patch at `//test/extensions/filters/
 
 ## Build workflow
 
-`.github/workflows/envoy-image.yml` submits native amd64 and arm64 Kubernetes Jobs to a dedicated ACK cluster. Each Job uses a private Docker daemon sidecar; deleting the Job stops its compiler containers. No host Docker socket or self-hosted GitHub runner is used.
+`.github/workflows/envoy-image.yml` submits native amd64 and arm64 Kubernetes Jobs to a dedicated ACK cluster. Each Job uses a private Docker daemon sidecar; deleting the Job stops its compiler containers. No host Docker socket is used. Temporary Actions runner Pods submit the Jobs over the ACK private endpoint, respecting the existing API access whitelist.
 
 The native jobs apply the patch to the pinned Envoy source, run its C++ tests, and build an optimized Envoy binary inside the pinned build image. Each job packages the binary in the pinned runtime image, checks its architecture and version, and validates `smoke.yaml` to confirm that the custom factory is registered. Both jobs must succeed before publishing merges their immutable digests. Publishing also checks both source labels and the exact `linux/amd64`, `linux/arm64` platform set.
 
@@ -30,7 +30,9 @@ Prepare one native amd64 node pool and one native arm64 node pool in Hong Kong, 
 
 Apply `ack-build.yaml` to create the namespace, workflow service account, namespace-scoped permissions, and one 500 GiB cache PVC per architecture. Place a Docker config with push permission for the destination in Secret `envoy-registry`, key `config.json`, in namespace `envoy-build`. Do not commit the Docker config.
 
-Create the GitHub deployment environment `envoy-build` in `Kuromesi/agentio`. Set its `ENVOY_BUILD_KUBECONFIG` secret to a kubeconfig using a time-limited token for service account `envoy-build/envoy-workflow`. The account can submit and inspect Jobs only in this namespace. Refresh the token before each build campaign; do not upload an administrator kubeconfig. Restrict environment deployment branches and tags to `envoy-legacy-extproc` and trusted `envoy-base-*` tags.
+Label a small amd64 system node `agentio-runner=true`. Before each workflow run, execute `start-runners.sh` with `KUBECONFIG` set to the dedicated cluster administrator configuration and `gh` logged in to `Kuromesi/agentio`. It creates three ephemeral runner Pods: one for each architecture job and one for publishing. They run only this trusted repository workflow, register using a short-lived registration token, and exit after one job. No GitHub personal access token is stored in ACK.
+
+Create the GitHub deployment environment `envoy-build` in `Kuromesi/agentio`. Set its `ENVOY_BUILD_KUBECONFIG` secret to a kubeconfig using a time-limited token for service account `envoy-build/envoy-workflow`. The account can submit and inspect Jobs only in this namespace. Use the ACK private API endpoint in this kubeconfig. Refresh the token before each build campaign; do not upload an administrator kubeconfig. Restrict environment deployment branches and tags to `envoy-legacy-extproc` and trusted `envoy-base-*` tags.
 
 ### Triggering
 
@@ -47,7 +49,7 @@ The workflow also supports `workflow_dispatch` on `envoy-legacy-extproc`. GitHub
 
 Native compilation is limited to 19800 seconds. The ACK Job deadline remains effective if the GitHub runner disappears. On success, failure, or cancellation, the runner deletes its Job and daemon. Completed build logs are uploaded to Actions; while compiling, inspect the Job's `build` container logs in ACK.
 
-Generated checkouts, Docker layers, binaries, and Bazel caches reside on the per-architecture PVCs mounted at `/disk1`. Builds take a per-volume lock. Jobs are not retried automatically. Keep the PVCs across retries, then delete them when the build campaign ends: retaining cache disks, an idle ACK cluster, or running worker nodes continues to incur charges. Infrastructure creation and release are separate from this workflow. Remove the temporary GitHub access secret when releasing the cluster.
+Generated checkouts, Docker layers, binaries, and Bazel caches reside on the per-architecture PVCs mounted at `/disk1`. Builds take a per-volume lock. Jobs are not retried automatically. Keep the PVCs across retries, then delete them when the build campaign ends: retaining cache disks, an idle ACK cluster, or running worker nodes continues to incur charges. Infrastructure creation and release are separate from this workflow. Remove the temporary GitHub access secret and any unused runner registrations when releasing the cluster.
 
 ## Local checks
 

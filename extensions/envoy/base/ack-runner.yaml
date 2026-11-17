@@ -1,0 +1,45 @@
+# Copyright 2026 The Kruise Authors
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: envoy-runners-
+  namespace: envoy-build
+spec:
+  parallelism: 3
+  completions: 3
+  backoffLimit: 0
+  activeDeadlineSeconds: 21600
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        agentio-runner: 'true'
+        kubernetes.io/arch: amd64
+      containers:
+        - name: runner
+          image: ghcr.io/actions/actions-runner:2.338.2
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: '1'
+              memory: 1Gi
+          env:
+            - name: REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: envoy-runner-registration
+                  key: token
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              sudo apt-get update -qq
+              sudo apt-get install -y --no-install-recommends python3
+              curl -fsSL https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o /tmp/kubectl
+              sudo install -m 755 /tmp/kubectl /usr/local/bin/kubectl
+              ./config.sh --url https://github.com/Kuromesi/agentio --token "$REGISTRATION_TOKEN" --name "$HOSTNAME" --labels envoy-ack --unattended --ephemeral --disableupdate
+              exec ./run.sh
